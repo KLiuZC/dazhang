@@ -82,6 +82,8 @@
 			}
 		},
 		onShow() {
+			// 复位本页标题：防止从详情页快速返回时，详情的异步标题落到首页头上
+			uni.setNavigationBarTitle({ title: this.navTitled ? '搭账' : '' })
 			this.load()
 		},
 		onPullDownRefresh() {

@@ -204,6 +204,7 @@
 						<view class="cell-value num neg">¥{{ fen2yuan(t.amount) }}</view>
 					</view>
 				</view>
+				<view v-if="hasDust" class="hint">几分钱的凑整尾差已自动抹平，不用转账</view>
 
 				<button
 					class="btn-share-img"
@@ -273,6 +274,7 @@
 				joinNickname: '',
 				profile: { nickname: '', avatar: '' },
 				isCreator: false,
+				hasDust: false,
 				// 账目详情浮层
 				sheetExpense: null,
 				sheetOpen: false
@@ -325,6 +327,14 @@
 				const m = this.memberMap[id]
 				return (m && m.nickname) || '?'
 			},
+			// 异步返回时用户可能已离开本页，只有自己还是当前页才设置标题，避免污染别的页面
+			setNavTitle(title) {
+				const pages = getCurrentPages()
+				const current = pages[pages.length - 1]
+				if (current && current.route === 'pages/ledger/detail') {
+					uni.setNavigationBarTitle({ title })
+				}
+			},
 			async load() {
 				// 首次进入先出缓存（秒开）；之后的刷新保持当前画面，静默更新
 				if (this.isMember === null) {
@@ -337,8 +347,9 @@
 						this.expenses = this.normalizeExpenses(cached.expenses)
 						this.balances = cached.balances || []
 						this.transfers = cached.transfers || []
+						this.hasDust = !!cached.hasDust
 						if (cached.ledger && cached.ledger.title) {
-							uni.setNavigationBarTitle({ title: cached.ledger.title })
+							this.setNavTitle(cached.ledger.title)
 						}
 					}
 				}
@@ -353,20 +364,22 @@
 						this.expenses = this.normalizeExpenses(res.expenses)
 						this.balances = res.balances || []
 						this.transfers = res.transfers || []
+						this.hasDust = !!res.hasDust
 						writeCache('ledger_' + this.ledgerId, {
 							isCreator: this.isCreator,
 							myMemberId: this.myMemberId,
 							ledger: this.ledger,
 							expenses: this.expenses,
 							balances: this.balances,
-							transfers: this.transfers
+							transfers: this.transfers,
+							hasDust: this.hasDust
 						})
 					} else {
 						const p = await callLedger('getMyProfile')
 						this.profile = (p && p.profile) || { nickname: '', avatar: '' }
 						this.profile.avatar = safeImg(this.profile.avatar)
 					}
-					uni.setNavigationBarTitle({ title: res.ledger.title })
+					this.setNavTitle(res.ledger.title)
 				} catch (e) {
 					showError(e)
 				}
@@ -590,44 +603,9 @@
 		margin-left: 16rpx;
 	}
 
-	/* ---------- iOS 分段控件：滑块位移，Apple 曲线 ---------- */
+	/* 分段控件全局样式在 App.vue；本页仅补列表下方间距 */
 	.segmented {
-		position: relative;
-		display: flex;
-		background: var(--fill);
-		border-radius: 18rpx;
-		padding: 4rpx;
 		margin-bottom: 28rpx;
-	}
-
-	.seg-thumb {
-		position: absolute;
-		top: 4rpx;
-		bottom: 4rpx;
-		left: 4rpx;
-		width: calc(50% - 4rpx);
-		background: #FFFFFF;
-		border-radius: 14rpx;
-		box-shadow: 0 6rpx 16rpx rgba(0, 0, 0, 0.08), 0 1rpx 2rpx rgba(0, 0, 0, 0.06);
-		transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
-	}
-
-	.seg-thumb.right {
-		transform: translateX(100%);
-	}
-
-	.seg-item {
-		position: relative;
-		flex: 1;
-		text-align: center;
-		font-size: 28rpx;
-		color: var(--label);
-		padding: 12rpx 0;
-		transition: font-weight 100ms;
-	}
-
-	.seg-item.active {
-		font-weight: 600;
 	}
 
 	/* 面板切换：轻微上浮淡入 */
@@ -647,9 +625,6 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.seg-thumb {
-			transition: none;
-		}
 		.tab-pane {
 			animation: none;
 		}

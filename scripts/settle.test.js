@@ -132,5 +132,23 @@ function sum(arr, key) {
 	check('外币折算随机压测1000组：守恒且无负值', ok)
 }
 
+// —— 尾差抹平与"余数优先给垫付人" ——
+{
+	const b = new Map([['A', 7180], ['B', -7179], ['C', -1]])
+	const ts = calcTransfers(b, 9)
+	check('≤9分的尾差净额不生成转账', ts.length === 1 && ts[0].from === 'B' && ts[0].to === 'A' && ts[0].amount === 7179)
+	check('纯尾差时无需任何转账', calcTransfers(new Map([['A', 1], ['B', -1]]), 9).length === 0)
+
+	const parts = [
+		{ member_id: 'a', amount: 1000 },
+		{ member_id: 'b', amount: 1000 },
+		{ member_id: 'c', amount: 1000 }
+	]
+	const cny = convertPartsToCny(14360, parts, 'b') // 余 2 分，应从 b 开始分
+	const byId = id => cny.find(p => p.member_id === id).amount
+	check('折算余数优先落在垫付人头上', byId('b') === 4787 && byId('c') === 4787 && byId('a') === 4786)
+	check('优先分配后合计仍守恒', byId('a') + byId('b') + byId('c') === 14360)
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)

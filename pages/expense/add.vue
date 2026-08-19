@@ -44,9 +44,19 @@
 			</picker>
 		</view>
 
-		<view class="sec-h">谁参与（均摊）</view>
+		<view class="sec-h">谁参与</view>
 		<view class="group">
-			<view class="chips">
+			<!-- 分摊方式切换 -->
+			<view class="split-seg">
+				<view class="segmented">
+					<view class="seg-thumb" :class="{ right: splitMode === 'custom' }"></view>
+					<view class="seg-item" :class="{ active: splitMode === 'equal' }" @click="splitMode = 'equal'">均摊</view>
+					<view class="seg-item" :class="{ active: splitMode === 'custom' }" @click="splitMode = 'custom'">按金额</view>
+				</view>
+			</view>
+
+			<!-- 均摊：勾选参与人 -->
+			<view v-if="splitMode === 'equal'" class="chips">
 				<view
 					v-for="m in members"
 					:key="m.id"
@@ -57,6 +67,25 @@
 					@click="toggle(m.id)"
 				>{{ m.nickname }}</view>
 			</view>
+
+			<!-- 按金额：每人填各自承担的金额，留空 = 不参与 -->
+			<template v-else>
+				<view v-for="m in members" :key="m.id" class="cell cell-sep">
+					<view class="cell-main">
+						<view class="cell-title">{{ m.nickname }}</view>
+					</view>
+					<view class="footnote">{{ curSymbol(currency) }}</view>
+					<input
+						class="custom-input num"
+						type="digit"
+						:value="customAmounts[m.id] || ''"
+						placeholder="0"
+						placeholder-class="ph"
+						@input="onCustomInput(m.id, $event)"
+					/>
+				</view>
+			</template>
+
 			<view
 				class="cell cell-sep"
 				hover-class="cell-press"
@@ -69,7 +98,7 @@
 				</view>
 			</view>
 		</view>
-		<view v-if="previewText" class="sec-f">{{ previewText }}</view>
+		<view v-if="previewText" class="sec-f" :class="{ 'sec-f-warn': customMismatch }">{{ previewText }}</view>
 
 		<view class="footer-bar">
 			<button
@@ -99,6 +128,8 @@
 				amountStr: '',
 				currency: 'CNY',
 				ledgerCurrencies: [],
+				splitMode: 'equal',
+				customAmounts: {}, // member_id -> 输入的金额字符串（原币）
 				submitting: false
 			}
 		},
@@ -123,11 +154,37 @@
 				const c = this.ledgerCurrencies.find(x => x.code === this.currency)
 				return c ? c.rate : 1
 			},
+			// 按金额模式：已分配合计与参与人数（原币分值）
+			assignedFen() {
+				let sum = 0
+				for (const m of this.members) {
+					const v = yuan2fen(this.customAmounts[m.id])
+					if (Number.isFinite(v) && v > 0) sum += v
+				}
+				return sum
+			},
+			customCount() {
+				return this.members.filter(m => yuan2fen(this.customAmounts[m.id]) > 0).length
+			},
+			customMismatch() {
+				if (this.splitMode !== 'custom') return false
+				const fen = yuan2fen(this.amountStr)
+				return Number.isFinite(fen) && fen > 0 && this.assignedFen !== fen
+			},
 			previewText() {
 				const fen = yuan2fen(this.amountStr)
+				const sym = curSymbol(this.currency)
+				if (this.splitMode === 'custom') {
+					if (!Number.isFinite(fen) || fen <= 0) return '先在上面填总金额，再给每个人分'
+					const diff = fen - this.assignedFen
+					if (diff > 0) return `还差 ${sym}${fen2yuan(diff)} 未分完`
+					if (diff < 0) return `多分了 ${sym}${fen2yuan(-diff)}，超过总金额`
+					const done = `已分完，${this.customCount}人参与`
+					return this.currency === 'CNY' ? done : `${done}（合计约 ¥${fen2yuan(Math.round(fen * this.curRate))}）`
+				}
 				const n = this.checkedIds.length
 				if (!Number.isFinite(fen) || fen <= 0 || n === 0) return ''
-				const per = `${n}人均摊，每人约 ${curSymbol(this.currency)}${fen2yuan(Math.round(fen / n))}`
+				const per = `${n}人均摊，每人约 ${sym}${fen2yuan(Math.round(fen / n))}`
 				if (this.currency === 'CNY') return per
 				return `${per}（合计约 ¥${fen2yuan(Math.round(fen * this.curRate))}）`
 			}
@@ -169,9 +226,18 @@
 						this.currency = exp.currency || 'CNY'
 						const payerIdx = this.members.findIndex(m => m.id === exp.payer_member_id)
 						if (payerIdx >= 0) this.payerIndex = payerIdx
-						const inExp = new Set(exp.participants.map(p => p.member_id))
-						for (const m of this.members) checked[m.id] = inExp.has(m.id)
-						this.checked = { ...checked }
+						this.splitMode = exp.split_type === 'custom' ? 'custom' : 'equal'
+						if (this.splitMode === 'custom') {
+							// 用原币份额回填每人金额
+							const src = exp.participants_original || exp.participants
+							const ca = {}
+							for (const p of src) ca[p.member_id] = fen2yuan(p.amount)
+							this.customAmounts = ca
+						} else {
+							const inExp = new Set(exp.participants.map(p => p.member_id))
+							for (const m of this.members) checked[m.id] = inExp.has(m.id)
+							this.checked = { ...checked }
+						}
 					}
 				} catch (e) {
 					showError(e)
@@ -187,6 +253,9 @@
 			},
 			toggle(id) {
 				this.checked[id] = !this.checked[id]
+			},
+			onCustomInput(id, e) {
+				this.customAmounts[id] = e.detail.value
 			},
 			addVirtualMember() {
 				uni.showModal({
@@ -211,19 +280,35 @@
 				if (!title) return toast('写一下这笔是什么')
 				const fen = yuan2fen(this.amountStr)
 				if (!Number.isFinite(fen) || fen <= 0) return toast('金额不对哦')
-				if (!this.checkedIds.length) return toast('至少选一个参与人')
 				const payer = this.members[this.payerIndex]
 				if (!payer) return toast('选一下谁垫付的')
+
+				const params = {
+					title,
+					amount: fen,
+					currency: this.currency,
+					payerMemberId: payer.id
+				}
+				if (this.splitMode === 'custom') {
+					const parts = []
+					for (const m of this.members) {
+						const v = yuan2fen(this.customAmounts[m.id])
+						if (Number.isFinite(v) && v > 0) parts.push({ member_id: m.id, amount: v })
+					}
+					if (!parts.length) return toast('给至少一个人分点金额')
+					const sum = parts.reduce((s, p) => s + p.amount, 0)
+					if (sum > fen) return toast('分配超过了总金额')
+					if (sum < fen) return toast(`还差 ${curSymbol(this.currency)}${fen2yuan(fen - sum)} 未分完`)
+					params.splitType = 'custom'
+					params.participants = parts
+				} else {
+					if (!this.checkedIds.length) return toast('至少选一个参与人')
+					params.splitType = 'equal'
+					params.participantMemberIds = this.checkedIds
+				}
+
 				this.submitting = true
 				try {
-					const params = {
-						title,
-						amount: fen,
-						currency: this.currency,
-						payerMemberId: payer.id,
-						participantMemberIds: this.checkedIds,
-						splitType: 'equal'
-					}
 					if (this.expenseId) {
 						await callLedger('updateExpense', { ...params, expenseId: this.expenseId })
 					} else {
@@ -292,6 +377,21 @@
 		background: var(--green-tint);
 		color: var(--green);
 		font-weight: 600;
+	}
+
+	.split-seg {
+		padding: 24rpx 32rpx 8rpx;
+	}
+
+	.custom-input {
+		width: 200rpx;
+		text-align: right;
+		font-size: 32rpx;
+		margin-left: 12rpx;
+	}
+
+	.sec-f-warn {
+		color: var(--red);
 	}
 
 	.add-title {

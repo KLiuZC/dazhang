@@ -40,14 +40,15 @@ function calcBalances(members, expenses) {
 /**
  * 由净余额生成转账方案：欠得最多的人还给应收最多的人，逐一抵消。
  * 贪心结果保证转账笔数 ≤ 成员数-1（严格最少笔数是 NP-hard，贪心已足够好）。
+ * @param dustFen 尾差阈值（分）：净额绝对值 ≤ 此值的不生成转账（凑整尾差不值得为它转一笔）
  * @returns [{ from: member_id, to: member_id, amount(分) }]
  */
-function calcTransfers(balances) {
+function calcTransfers(balances, dustFen = 0) {
 	const creditors = []
 	const debtors = []
 	for (const [id, v] of balances) {
-		if (v > 0) creditors.push({ id, v })
-		else if (v < 0) debtors.push({ id, v: -v })
+		if (v > dustFen) creditors.push({ id, v })
+		else if (v < -dustFen) debtors.push({ id, v: -v })
 	}
 	creditors.sort((a, b) => b.v - a.v)
 	debtors.sort((a, b) => b.v - a.v)
@@ -69,9 +70,10 @@ function calcTransfers(balances) {
 /**
  * 把一笔外币账目的每人份额守恒折算成人民币分。
  * totalCny = round(原币总额 × 汇率)；每人先按原币份额比例向下取整，
- * 差额从前往后每人 +1 分，保证合计严格等于 totalCny。
+ * 差额每人 +1 分补齐，保证合计严格等于 totalCny。
+ * @param priorityMemberId 余数优先分给谁（通常传垫付人：垫付者吸收凑整误差最符合直觉）
  */
-function convertPartsToCny(totalCny, parts) {
+function convertPartsToCny(totalCny, parts, priorityMemberId) {
 	const totalOriginal = parts.reduce((s, p) => s + p.amount, 0)
 	if (totalOriginal <= 0 || !parts.length) {
 		return parts.map(p => ({ member_id: p.member_id, amount: 0 }))
@@ -82,10 +84,15 @@ function convertPartsToCny(totalCny, parts) {
 		acc += v
 		return { member_id: p.member_id, amount: v }
 	})
+	let start = 0
+	if (priorityMemberId) {
+		const idx = out.findIndex(p => p.member_id === priorityMemberId)
+		if (idx >= 0) start = idx
+	}
 	let remainder = totalCny - acc
 	let i = 0
 	while (remainder > 0) {
-		out[i % out.length].amount += 1
+		out[(start + i) % out.length].amount += 1
 		i++
 		remainder--
 	}

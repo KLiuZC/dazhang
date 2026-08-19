@@ -265,6 +265,45 @@
 		color: var(--tertiary);
 	}
 
+	/* ---------- iOS 分段控件（明细/结算切换、分摊方式切换共用） ---------- */
+
+	.segmented {
+		position: relative;
+		display: flex;
+		background: var(--fill);
+		border-radius: 18rpx;
+		padding: 4rpx;
+	}
+
+	.seg-thumb {
+		position: absolute;
+		top: 4rpx;
+		bottom: 4rpx;
+		left: 4rpx;
+		width: calc(50% - 4rpx);
+		background: #FFFFFF;
+		border-radius: 14rpx;
+		box-shadow: 0 6rpx 16rpx rgba(0, 0, 0, 0.08), 0 1rpx 2rpx rgba(0, 0, 0, 0.06);
+		transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
+	}
+
+	.seg-thumb.right {
+		transform: translateX(100%);
+	}
+
+	.seg-item {
+		position: relative;
+		flex: 1;
+		text-align: center;
+		font-size: 28rpx;
+		color: var(--label);
+		padding: 12rpx 0;
+	}
+
+	.seg-item.active {
+		font-weight: 600;
+	}
+
 	/* ---------- 列表行左滑操作（首页/明细共用） ---------- */
 
 	.swipe-item {
@@ -340,7 +379,8 @@
 			transform: none !important;
 		}
 
-		.swipe-front {
+		.swipe-front,
+		.seg-thumb {
 			transition: none !important;
 		}
 	}

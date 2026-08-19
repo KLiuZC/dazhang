@@ -17,6 +17,9 @@ const MAX_MEMBERS = 50
 const MAX_TEXT_LEN = 30
 const MAX_AMOUNT = 100000000 // 单笔上限 100 万元（分）
 
+// 结算尾差阈值（分）：净额 ≤ 此值的不生成转账（多笔凑整攒出的几分钱不值得为它转账）
+const SETTLE_DUST = 9
+
 // 账本配额：上线初期不限制（开关关闭）。启用时把 QUOTA_ENABLED 改为 true 并重新上传即可，
 // 届时：进行中账本数 ≤ 免费额度 + 用户通过看广告等方式获得的 extra_ledger_quota
 const QUOTA_ENABLED = false
@@ -68,7 +71,11 @@ function buildParticipants(ledger, { amount, payerMemberId, participantMemberIds
 		for (const id of unique) {
 			assert(memberIds.has(id), '参与人不是账本成员')
 		}
-		parts = splitEqually(amount, unique)
+		// 垫付人排最前：均摊除不尽时，多出的分数优先由垫付者吸收
+		const ordered = unique.includes(payerMemberId)
+			? [payerMemberId, ...unique.filter(id => id !== payerMemberId)]
+			: unique
+		parts = splitEqually(amount, ordered)
 	} else {
 		assert(Array.isArray(participants) && participants.length > 0, '缺少分摊明细')
 		const seen = new Set()
@@ -438,14 +445,16 @@ module.exports = {
 			const cur = e.currency || 'CNY'
 			const rate = rates[cur] !== undefined ? rates[cur] : 1
 			const amountCny = toCnyAmount(e.amount, rate)
-			const partsCny = cur === 'CNY' ? e.participants : convertPartsToCny(amountCny, e.participants)
+			const partsCny = cur === 'CNY' ? e.participants : convertPartsToCny(amountCny, e.participants, e.payer_member_id)
 			return { raw: e, cur, rate, amountCny, partsCny }
 		})
 		const balances = calcBalances(
 			ledger.members,
 			converted.map(x => ({ payer_member_id: x.raw.payer_member_id, amount: x.amountCny, participants: x.partsCny }))
 		)
-		const transfers = calcTransfers(balances)
+		const transfers = calcTransfers(balances, SETTLE_DUST)
+		// 有被抹平的尾差时告知前端展示说明
+		const hasDust = [...balances.values()].some(v => v !== 0 && Math.abs(v) <= SETTLE_DUST)
 		return {
 			errCode: 0,
 			isMember: true,
@@ -461,13 +470,15 @@ module.exports = {
 				amount_cny: x.amountCny,    // 人民币分（列表与结算口径）
 				payer_member_id: x.raw.payer_member_id,
 				participants: x.partsCny,   // 每人份额（人民币分，守恒折算）
+				participants_original: x.raw.participants, // 原币份额（编辑自定义分摊时回填用）
 				split_type: x.raw.split_type,
 				expense_date: x.raw.expense_date,
 				create_date: x.raw.create_date,
 				can_delete: x.raw.creator_uid === this.uid || ledger.creator_uid === this.uid
 			})),
 			balances: [...balances].map(([member_id, amount]) => ({ member_id, amount })),
-			transfers
+			transfers,
+			hasDust
 		}
 	},
 
