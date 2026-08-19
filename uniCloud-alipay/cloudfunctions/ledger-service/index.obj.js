@@ -6,9 +6,9 @@
  * 权限规则（是否账本成员、谁能删账等）在代码里集中校验。
  */
 const uniIdCommon = require('uni-id-common')
-const { splitEqually, calcBalances, calcTransfers } = require('./settle')
+const { splitEqually, calcBalances, calcTransfers, convertPartsToCny } = require('./settle')
 const { checkText } = require('./wx-sec')
-const { fetchDailyRates } = require('./fx')
+const { fetchDailyRates, SUPPORTED } = require('./fx')
 
 const db = uniCloud.database()
 const dbCmd = db.command
@@ -168,6 +168,20 @@ async function ensureFxRates() {
 	return { date: dayKey, toCny: fresh.toCny }
 }
 
+/** 账本的币种→汇率映射（1 外币 = rate 人民币），主币种人民币恒为 1 */
+function ledgerRateMap(ledger) {
+	const map = { CNY: 1 }
+	for (const c of ledger.currencies || []) {
+		map[c.code] = c.rate
+	}
+	return map
+}
+
+/** 原币最小单位 → 人民币分 */
+function toCnyAmount(amount, rate) {
+	return Math.round(amount * rate)
+}
+
 function publicMembers(ledger, uid) {
 	return (ledger.members || []).map(m => ({
 		id: m.id,
@@ -273,6 +287,7 @@ module.exports = {
 			creator_uid: this.uid,
 			status: 0,
 			members: [{ id: genMemberId(), uid: this.uid, nickname: identity.nickname, avatar: identity.avatar }],
+			currencies: [],
 			expense_count: 0,
 			total_amount: 0,
 			create_date: now,
@@ -324,17 +339,61 @@ module.exports = {
 		return { errCode: 0, extraQuota: (user.extra_ledger_quota || 0) + 1 }
 	},
 
-	/** 编辑账本信息（名称/封面）。仅创建者 */
-	async updateLedger({ ledgerId, title, icon } = {}) {
+	/** 编辑账本信息（名称/封面/币种与汇率）。仅创建者；汇率变化后全账本按新汇率重算合计 */
+	async updateLedger({ ledgerId, title, icon, currencies } = {}) {
 		const ledger = await mustGetLedger(ledgerId)
 		assert(ledger.creator_uid === this.uid, '只有账本创建者可以修改', 'FORBIDDEN')
 		title = cleanText(title, '账本名称')
 		await ensureTextSafe(this.uid, [title])
-		await db.collection('ledgers').doc(ledger._id).update({
+
+		const data = {
 			title,
 			icon: typeof icon === 'string' && icon ? icon : ledger.icon,
 			update_date: Date.now()
-		})
+		}
+
+		if (Array.isArray(currencies)) {
+			const seen = new Set()
+			const clean = []
+			for (const c of currencies) {
+				assert(c && SUPPORTED.includes(c.code), '存在不支持的币种')
+				assert(!seen.has(c.code), '币种重复')
+				seen.add(c.code)
+				const rate = Number(c.rate)
+				assert(Number.isFinite(rate) && rate > 0 && rate <= 100000, `${c.code} 的汇率不合法`)
+				clean.push({ code: c.code, rate: Number(rate.toFixed(4)) })
+			}
+			// 已有账目的外币不能停用，否则历史账目无法折算
+			const used = await db.collection('expenses')
+				.where({ ledger_id: ledger._id })
+				.field({ currency: true })
+				.limit(1000)
+				.get()
+			for (const e of used.data) {
+				if (e.currency && e.currency !== 'CNY' && !seen.has(e.currency)) {
+					fail('CURRENCY_IN_USE', `${e.currency} 已有账目，不能停用该币种`)
+				}
+			}
+			data.currencies = clean
+		}
+
+		await db.collection('ledgers').doc(ledger._id).update(data)
+
+		// 币种/汇率有变动时，按新汇率口径重算账本合计（低频操作，全量重算保证一致）
+		if (data.currencies) {
+			const all = await db.collection('expenses')
+				.where({ ledger_id: ledger._id })
+				.field({ amount: true, currency: true })
+				.limit(1000)
+				.get()
+			const rates = { CNY: 1 }
+			for (const c of data.currencies) rates[c.code] = c.rate
+			let total = 0
+			for (const e of all.data) {
+				total += toCnyAmount(e.amount, rates[e.currency || 'CNY'] || 1)
+			}
+			await db.collection('ledgers').doc(ledger._id).update({ total_amount: total })
+		}
 		return { errCode: 0 }
 	},
 
@@ -362,6 +421,7 @@ module.exports = {
 			status: ledger.status,
 			expense_count: ledger.expense_count || 0,
 			total_amount: ledger.total_amount || 0,
+			currencies: ledger.currencies || [],
 			members: publicMembers(ledger, this.uid).map(m => ({ ...m, avatar: toURL(m.avatar) }))
 		}
 		if (!me) {
@@ -372,8 +432,19 @@ module.exports = {
 			.orderBy('create_date', 'desc')
 			.limit(200)
 			.get()
-		const expenses = expRes.data
-		const balances = calcBalances(ledger.members, expenses)
+		// 读取时统一折算：账目存原币，按账本当前锁定汇率折成人民币分，结算全在人民币域进行
+		const rates = ledgerRateMap(ledger)
+		const converted = expRes.data.map(e => {
+			const cur = e.currency || 'CNY'
+			const rate = rates[cur] !== undefined ? rates[cur] : 1
+			const amountCny = toCnyAmount(e.amount, rate)
+			const partsCny = cur === 'CNY' ? e.participants : convertPartsToCny(amountCny, e.participants)
+			return { raw: e, cur, rate, amountCny, partsCny }
+		})
+		const balances = calcBalances(
+			ledger.members,
+			converted.map(x => ({ payer_member_id: x.raw.payer_member_id, amount: x.amountCny, participants: x.partsCny }))
+		)
 		const transfers = calcTransfers(balances)
 		return {
 			errCode: 0,
@@ -381,16 +452,19 @@ module.exports = {
 			myMemberId: me.id,
 			isCreator: ledger.creator_uid === this.uid,
 			ledger: baseInfo,
-			expenses: expenses.map(e => ({
-				_id: e._id,
-				title: e.title,
-				amount: e.amount,
-				payer_member_id: e.payer_member_id,
-				participants: e.participants,
-				split_type: e.split_type,
-				expense_date: e.expense_date,
-				create_date: e.create_date,
-				can_delete: e.creator_uid === this.uid || ledger.creator_uid === this.uid
+			expenses: converted.map(x => ({
+				_id: x.raw._id,
+				title: x.raw.title,
+				currency: x.cur,
+				rate: x.rate,
+				amount: x.raw.amount,       // 原币最小单位
+				amount_cny: x.amountCny,    // 人民币分（列表与结算口径）
+				payer_member_id: x.raw.payer_member_id,
+				participants: x.partsCny,   // 每人份额（人民币分，守恒折算）
+				split_type: x.raw.split_type,
+				expense_date: x.raw.expense_date,
+				create_date: x.raw.create_date,
+				can_delete: x.raw.creator_uid === this.uid || ledger.creator_uid === this.uid
 			})),
 			balances: [...balances].map(([member_id, amount]) => ({ member_id, amount })),
 			transfers
@@ -456,11 +530,14 @@ module.exports = {
 	 * equal：传 participantMemberIds，服务端均摊（余数分给靠前的人）；
 	 * custom：传 participants: [{ member_id, amount(分) }]，合计必须等于总金额。
 	 */
-	async addExpense({ ledgerId, title, amount, payerMemberId, participantMemberIds, splitType, participants, expenseDate } = {}) {
+	async addExpense({ ledgerId, title, amount, currency, payerMemberId, participantMemberIds, splitType, participants, expenseDate } = {}) {
 		const ledger = await mustGetLedger(ledgerId)
 		assert(findMemberByUid(ledger, this.uid), '你不是该账本成员', 'NOT_MEMBER')
 		title = cleanText(title, '账目标题')
 		await ensureTextSafe(this.uid, [title])
+		currency = typeof currency === 'string' && currency ? currency : 'CNY'
+		const rates = ledgerRateMap(ledger)
+		assert(rates[currency] !== undefined, '该币种未在账本中启用')
 		const { splitType: type, parts } = buildParticipants(ledger, {
 			amount, payerMemberId, participantMemberIds, splitType, participants
 		})
@@ -470,6 +547,7 @@ module.exports = {
 			ledger_id: ledger._id,
 			title,
 			amount,
+			currency,
 			payer_member_id: payerMemberId,
 			participants: parts,
 			split_type: type,
@@ -479,14 +557,14 @@ module.exports = {
 		})
 		await db.collection('ledgers').doc(ledger._id).update({
 			expense_count: dbCmd.inc(1),
-			total_amount: dbCmd.inc(amount),
+			total_amount: dbCmd.inc(toCnyAmount(amount, rates[currency])),
 			update_date: now
 		})
 		return { errCode: 0, expenseId: res.id }
 	},
 
-	/** 改一笔。仅记账人或账本创建者可改；金额差额同步进账本合计 */
-	async updateExpense({ expenseId, title, amount, payerMemberId, participantMemberIds, splitType, participants, expenseDate } = {}) {
+	/** 改一笔。仅记账人或账本创建者可改；合计按当前汇率口径增量修正 */
+	async updateExpense({ expenseId, title, amount, currency, payerMemberId, participantMemberIds, splitType, participants, expenseDate } = {}) {
 		assert(typeof expenseId === 'string' && expenseId.length > 0, '缺少账目ID')
 		const res = await db.collection('expenses').doc(expenseId).get()
 		const expense = res.data && res.data[0]
@@ -500,21 +578,29 @@ module.exports = {
 		)
 		title = cleanText(title, '账目标题')
 		await ensureTextSafe(this.uid, [title])
+		currency = typeof currency === 'string' && currency ? currency : 'CNY'
+		const rates = ledgerRateMap(ledger)
+		assert(rates[currency] !== undefined, '该币种未在账本中启用')
 		const { splitType: type, parts } = buildParticipants(ledger, {
 			amount, payerMemberId, participantMemberIds, splitType, participants
 		})
+
+		// 新旧两笔都按当前账本汇率折算，与合计的当前口径保持一致
+		const oldCny = toCnyAmount(expense.amount, rates[expense.currency || 'CNY'] || 1)
+		const newCny = toCnyAmount(amount, rates[currency])
 
 		const now = Date.now()
 		await db.collection('expenses').doc(expenseId).update({
 			title,
 			amount,
+			currency,
 			payer_member_id: payerMemberId,
 			participants: parts,
 			split_type: type,
 			expense_date: Number.isFinite(expenseDate) ? expenseDate : (expense.expense_date || now)
 		})
 		await db.collection('ledgers').doc(ledger._id).update({
-			total_amount: dbCmd.inc(amount - expense.amount),
+			total_amount: dbCmd.inc(newCny - oldCny),
 			update_date: now
 		})
 		return { errCode: 0 }
@@ -533,10 +619,12 @@ module.exports = {
 			'只有记账人或账本创建者可以删除',
 			'FORBIDDEN'
 		)
+		const rates = ledgerRateMap(ledger)
+		const cny = toCnyAmount(expense.amount, rates[expense.currency || 'CNY'] || 1)
 		await db.collection('expenses').doc(expenseId).remove()
 		await db.collection('ledgers').doc(ledger._id).update({
 			expense_count: dbCmd.inc(-1),
-			total_amount: dbCmd.inc(-expense.amount),
+			total_amount: dbCmd.inc(-cny),
 			update_date: Date.now()
 		})
 		return { errCode: 0 }

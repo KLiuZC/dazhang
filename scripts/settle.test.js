@@ -1,6 +1,6 @@
 'use strict'
 // 结算算法自测：node scripts/settle.test.js
-const { splitEqually, calcBalances, calcTransfers } = require('../uniCloud-alipay/cloudfunctions/ledger-service/settle.js')
+const { splitEqually, calcBalances, calcTransfers, convertPartsToCny } = require('../uniCloud-alipay/cloudfunctions/ledger-service/settle.js')
 
 let passed = 0
 let failed = 0
@@ -108,6 +108,28 @@ function sum(arr, key) {
 	]
 	const transfers = calcTransfers(calcBalances(members, expenses))
 	check('互相抵消时无需转账', transfers.length === 0)
+}
+
+// —— convertPartsToCny：外币份额守恒折算 ——
+{
+	const parts = splitEqually(2500, ['a', 'b', 'c']) // A$25.00 三人均摊
+	const totalCny = Math.round(2500 * 4.7865)
+	const cny = convertPartsToCny(totalCny, parts)
+	check('外币折算合计守恒', sum(cny, 'amount') === totalCny)
+
+	let ok = true
+	for (let i = 0; i < 1000; i++) {
+		const n = 1 + Math.floor(Math.random() * 12)
+		const amt = 1 + Math.floor(Math.random() * 1000000)
+		const ids = Array.from({ length: n }, (_, k) => 'm' + k)
+		const ps = splitEqually(amt, ids)
+		const rate = Math.random() * 10 + 0.001
+		const t = Math.round(amt * rate)
+		const c = convertPartsToCny(t, ps)
+		if (sum(c, 'amount') !== t) { ok = false; break }
+		if (c.some(x => x.amount < 0)) { ok = false; break }
+	}
+	check('外币折算随机压测1000组：守恒且无负值', ok)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

@@ -40,6 +40,37 @@
 			</view>
 		</view>
 
+		<!-- 币种与汇率：仅管理模式配置，主币种恒为人民币 -->
+		<template v-if="editId">
+			<view class="sec-h">币种与汇率</view>
+			<view class="group">
+				<view v-for="(c, i) in currencies" :key="c.code" class="cell" :class="{ 'cell-sep': i > 0 }">
+					<view class="cell-main">
+						<view class="cell-title">{{ currencyName(c.code) }} {{ c.code }}</view>
+						<view v-if="fxRates[c.code]" class="caption">今日参考 {{ fxDisplay(c.code) }}</view>
+					</view>
+					<input
+						class="rate-input num"
+						type="digit"
+						:value="String(c.rate)"
+						@blur="onRateBlur(i, $event)"
+					/>
+					<view class="footnote rate-unit">CNY</view>
+					<view class="rate-remove" hover-class="press-scale" hover-start-time="0" @click="removeCurrency(i)">
+						<uni-icons type="closeempty" size="16" color="#8E8E93" />
+					</view>
+				</view>
+				<picker :range="remainNames" @change="onAddCurrency">
+					<view class="cell" :class="{ 'cell-sep': currencies.length > 0 }" hover-class="cell-press" hover-start-time="0">
+						<view class="cell-main">
+							<view class="add-cur">＋ 添加币种</view>
+						</view>
+					</view>
+				</picker>
+			</view>
+			<view class="sec-f">1 外币 = 多少人民币，由大家商量确定，默认填入今日参考价；保存后全账本按新汇率重新折算。</view>
+		</template>
+
 		<!-- 编辑模式不需要身份；新建时：已设置微信身份直接用，未设置则填一次昵称 -->
 		<template v-if="!editId && hasProfile">
 			<view class="sec-h">你的身份</view>
@@ -98,6 +129,7 @@
 
 <script>
 	import { callLedger, showError, toast, getMyNickname, saveMyNickname, safeImg, removeCache } from '@/utils/cloud.js'
+	import { CURRENCIES, currencyName } from '@/utils/currency.js'
 
 	export default {
 		data() {
@@ -116,12 +148,21 @@
 				],
 				nickname: '',
 				profile: { nickname: '', avatar: '' },
+				currencies: [],
+				fxRates: {},
+				fxDate: '',
 				submitting: false
 			}
 		},
 		computed: {
 			hasProfile() {
 				return !!this.profile.nickname
+			},
+			remaining() {
+				return CURRENCIES.filter(c => !this.currencies.some(x => x.code === c.code))
+			},
+			remainNames() {
+				return this.remaining.map(c => `${c.name} ${c.code}`)
 			}
 		},
 		onLoad(options) {
@@ -130,6 +171,7 @@
 			if (this.editId) {
 				uni.setNavigationBarTitle({ title: '管理账本' })
 				this.loadLedger()
+				this.loadFx()
 			} else {
 				this.loadProfile()
 			}
@@ -151,10 +193,44 @@
 					this.title = res.ledger.title
 					this.icon = res.ledger.icon || '🧾'
 					this.isCreator = !!res.isCreator
+					this.currencies = (res.ledger.currencies || []).map(c => ({ ...c }))
 					const idx = this.categories.findIndex(c => c.icons.includes(this.icon))
 					if (idx >= 0) this.catIndex = idx
 				} catch (e) {
 					showError(e)
+				}
+			},
+			// 今日参考汇率，仅作添加币种时的默认值；拉不到不阻塞（手填即可）
+			async loadFx() {
+				try {
+					const res = await callLedger('getFxRates')
+					this.fxRates = res.rates || {}
+					this.fxDate = res.date || ''
+				} catch (e) {
+					console.error(e)
+				}
+			},
+			currencyName,
+			fxDisplay(code) {
+				const v = this.fxRates[code]
+				return v ? Number(v.toFixed(4)) : ''
+			},
+			onAddCurrency(e) {
+				const cur = this.remaining[Number(e.detail.value)]
+				if (!cur) return
+				const ref = this.fxRates[cur.code]
+				this.currencies.push({ code: cur.code, rate: ref ? Number(ref.toFixed(4)) : 1 })
+			},
+			removeCurrency(i) {
+				this.currencies.splice(i, 1)
+			},
+			onRateBlur(i, e) {
+				const v = parseFloat(e.detail.value)
+				if (Number.isFinite(v) && v > 0) {
+					this.currencies[i].rate = Number(v.toFixed(4))
+				} else {
+					toast('汇率要大于 0')
+					this.currencies = this.currencies.map(c => ({ ...c }))
 				}
 			},
 			removeLedger() {
@@ -184,7 +260,12 @@
 				if (this.editId) {
 					this.submitting = true
 					try {
-						await callLedger('updateLedger', { ledgerId: this.editId, title, icon: this.icon })
+						await callLedger('updateLedger', {
+							ledgerId: this.editId,
+							title,
+							icon: this.icon,
+							currencies: this.currencies.map(c => ({ code: c.code, rate: Number(c.rate) }))
+						})
 						uni.vibrateShort({ type: 'light' })
 						uni.showToast({ title: '已保存', icon: 'success' })
 						setTimeout(() => uni.navigateBack(), 600)
@@ -295,6 +376,26 @@
 	.icon-item.active {
 		background: var(--green-tint);
 		border-color: var(--green);
+	}
+
+	.rate-input {
+		width: 150rpx;
+		text-align: right;
+		font-size: 32rpx;
+	}
+
+	.rate-unit {
+		margin-left: 8rpx;
+	}
+
+	.rate-remove {
+		margin-left: 20rpx;
+		padding: 8rpx;
+	}
+
+	.add-cur {
+		color: var(--green);
+		font-size: 30rpx;
 	}
 
 	.danger-text {

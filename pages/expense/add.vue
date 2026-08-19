@@ -11,7 +11,16 @@
 				/>
 			</view>
 			<view class="cell cell-sep amount-cell">
-				<text class="amount-prefix num">¥</text>
+				<picker
+					v-if="currencyOptions.length > 1"
+					:range="currencyOptions"
+					range-key="label"
+					:value="currencyIndex"
+					@change="onCurrencyChange"
+				>
+					<view class="amount-prefix num cur-switch">{{ curSymbol(currency) }} ▾</view>
+				</picker>
+				<text v-else class="amount-prefix num">¥</text>
 				<input
 					class="amount-input num"
 					v-model="amountStr"
@@ -76,6 +85,7 @@
 
 <script>
 	import { callLedger, showError, toast, fen2yuan, yuan2fen } from '@/utils/cloud.js'
+	import { curSymbol, currencyName } from '@/utils/currency.js'
 
 	export default {
 		data() {
@@ -87,6 +97,8 @@
 				payerIndex: 0,
 				title: '',
 				amountStr: '',
+				currency: 'CNY',
+				ledgerCurrencies: [],
 				submitting: false
 			}
 		},
@@ -97,11 +109,27 @@
 			checkedIds() {
 				return this.members.filter(m => this.checked[m.id]).map(m => m.id)
 			},
+			currencyOptions() {
+				return [{ code: 'CNY', label: '人民币 ¥' }].concat(
+					this.ledgerCurrencies.map(c => ({ code: c.code, label: `${currencyName(c.code)} ${curSymbol(c.code)}` }))
+				)
+			},
+			currencyIndex() {
+				const i = this.currencyOptions.findIndex(o => o.code === this.currency)
+				return i >= 0 ? i : 0
+			},
+			curRate() {
+				if (this.currency === 'CNY') return 1
+				const c = this.ledgerCurrencies.find(x => x.code === this.currency)
+				return c ? c.rate : 1
+			},
 			previewText() {
 				const fen = yuan2fen(this.amountStr)
 				const n = this.checkedIds.length
 				if (!Number.isFinite(fen) || fen <= 0 || n === 0) return ''
-				return `${n}人均摊，每人约 ¥${fen2yuan(Math.round(fen / n))}`
+				const per = `${n}人均摊，每人约 ${curSymbol(this.currency)}${fen2yuan(Math.round(fen / n))}`
+				if (this.currency === 'CNY') return per
+				return `${per}（合计约 ¥${fen2yuan(Math.round(fen * this.curRate))}）`
 			}
 		},
 		onLoad(options) {
@@ -122,6 +150,7 @@
 						return
 					}
 					this.members = res.ledger.members
+					this.ledgerCurrencies = res.ledger.currencies || []
 					const checked = {}
 					for (const m of this.members) checked[m.id] = true
 					this.checked = checked
@@ -137,6 +166,7 @@
 						}
 						this.title = exp.title
 						this.amountStr = fen2yuan(exp.amount)
+						this.currency = exp.currency || 'CNY'
 						const payerIdx = this.members.findIndex(m => m.id === exp.payer_member_id)
 						if (payerIdx >= 0) this.payerIndex = payerIdx
 						const inExp = new Set(exp.participants.map(p => p.member_id))
@@ -149,6 +179,11 @@
 			},
 			onPayerChange(e) {
 				this.payerIndex = Number(e.detail.value)
+			},
+			curSymbol,
+			onCurrencyChange(e) {
+				const option = this.currencyOptions[Number(e.detail.value)]
+				if (option) this.currency = option.code
 			},
 			toggle(id) {
 				this.checked[id] = !this.checked[id]
@@ -184,6 +219,7 @@
 					const params = {
 						title,
 						amount: fen,
+						currency: this.currency,
 						payerMemberId: payer.id,
 						participantMemberIds: this.checkedIds,
 						splitType: 'equal'
@@ -223,6 +259,11 @@
 		font-weight: 600;
 		color: var(--secondary);
 		margin-right: 12rpx;
+	}
+
+	/* 可切换币种时前缀变绿提示可点 */
+	.cur-switch {
+		color: var(--green);
 	}
 
 	.amount-input {

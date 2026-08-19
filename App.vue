@@ -1,11 +1,6 @@
 <script>
 	export default {
-		onLaunch: function() {
-			// 临时验证：云端当日汇率拉取（看到控制台输出后即可删除这四行）
-			uniCloud.importObject('ledger-service', { customUI: true }).getFxRates()
-				.then(res => console.log('【汇率验证】成功：', res))
-				.catch(err => console.error('【汇率验证】失败：', err))
-		},
+		onLaunch: function() {},
 		onShow: function() {},
 		onHide: function() {}
 	}

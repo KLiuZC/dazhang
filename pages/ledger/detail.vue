@@ -152,7 +152,10 @@
 									<view class="cell-title">{{ e.title }}</view>
 									<view class="footnote">{{ memberName(e.payer_member_id) }} 垫付 · {{ e.participants.length }}人分 · {{ fmtDate(e.expense_date) }}</view>
 								</view>
-								<view class="cell-value num exp-amount">¥{{ fen2yuan(e.amount) }}</view>
+								<view class="val-col">
+									<view class="cell-value num exp-amount">¥{{ fen2yuan(e.amount_cny) }}</view>
+									<view v-if="e.currency && e.currency !== 'CNY'" class="caption num">{{ curSymbol(e.currency) }}{{ fen2yuan(e.amount) }}</view>
+								</view>
 							</view>
 						</view>
 					</view>
@@ -227,9 +230,12 @@
 				<view class="sheet" :class="{ open: sheetOpen }" @click.stop>
 					<view class="sheet-grabber"></view>
 					<view class="sheet-title">{{ sheetExpense.title }}</view>
-					<view class="sheet-amount num">¥{{ fen2yuan(sheetExpense.amount) }}</view>
+					<view class="sheet-amount num">¥{{ fen2yuan(sheetExpense.amount_cny) }}</view>
 					<view class="footnote sheet-sub">
 						{{ memberName(sheetExpense.payer_member_id) }} 垫付 · {{ sheetExpense.split_type === 'custom' ? '自定义分摊' : '均摊' }} · {{ fmtDate(sheetExpense.expense_date) }}
+					</view>
+					<view v-if="sheetExpense.currency && sheetExpense.currency !== 'CNY'" class="footnote sheet-fx">
+						原币 {{ curSymbol(sheetExpense.currency) }}{{ fen2yuan(sheetExpense.amount) }} · 汇率 {{ sheetExpense.rate }}
 					</view>
 					<view class="sheet-list">
 						<view v-for="p in sheetExpense.participants" :key="p.member_id" class="sheet-row">
@@ -250,6 +256,7 @@
 <script>
 	import { callLedger, showError, toast, fen2yuan, fmtDate, fmtDay, getMyNickname, saveMyNickname, safeImg, readCache, writeCache } from '@/utils/cloud.js'
 	import { createSwipeMixin } from '@/utils/swipe.js'
+	import { curSymbol } from '@/utils/currency.js'
 
 	export default {
 		mixins: [createSwipeMixin(224)],
@@ -309,6 +316,11 @@
 		methods: {
 			fen2yuan,
 			fmtDate,
+			curSymbol,
+			// 兼容旧缓存/旧数据：没有 amount_cny 字段时视为人民币账目
+			normalizeExpenses(list) {
+				return (list || []).map(e => ({ ...e, amount_cny: e.amount_cny != null ? e.amount_cny : e.amount }))
+			},
 			memberName(id) {
 				const m = this.memberMap[id]
 				return (m && m.nickname) || '?'
@@ -322,7 +334,7 @@
 						this.isCreator = cached.isCreator
 						this.myMemberId = cached.myMemberId
 						this.ledger = cached.ledger
-						this.expenses = cached.expenses || []
+						this.expenses = this.normalizeExpenses(cached.expenses)
 						this.balances = cached.balances || []
 						this.transfers = cached.transfers || []
 						if (cached.ledger && cached.ledger.title) {
@@ -338,7 +350,7 @@
 					this.ledger.members = (res.ledger.members || []).map(m => ({ ...m, avatar: safeImg(m.avatar) }))
 					if (res.isMember) {
 						this.myMemberId = res.myMemberId
-						this.expenses = res.expenses || []
+						this.expenses = this.normalizeExpenses(res.expenses)
 						this.balances = res.balances || []
 						this.transfers = res.transfers || []
 						writeCache('ledger_' + this.ledgerId, {
@@ -705,6 +717,23 @@
 	.sheet-sub {
 		text-align: center;
 		margin-bottom: 28rpx;
+	}
+
+	.sheet-fx {
+		text-align: center;
+		margin-top: -16rpx;
+		margin-bottom: 28rpx;
+	}
+
+	.val-col {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		margin-left: 20rpx;
+	}
+
+	.val-col .cell-value {
+		margin-left: 0;
 	}
 
 	.sheet-list {

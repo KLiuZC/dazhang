@@ -66,8 +66,35 @@ function calcTransfers(balances) {
 	return transfers
 }
 
+/**
+ * 把一笔外币账目的每人份额守恒折算成人民币分。
+ * totalCny = round(原币总额 × 汇率)；每人先按原币份额比例向下取整，
+ * 差额从前往后每人 +1 分，保证合计严格等于 totalCny。
+ */
+function convertPartsToCny(totalCny, parts) {
+	const totalOriginal = parts.reduce((s, p) => s + p.amount, 0)
+	if (totalOriginal <= 0 || !parts.length) {
+		return parts.map(p => ({ member_id: p.member_id, amount: 0 }))
+	}
+	let acc = 0
+	const out = parts.map(p => {
+		const v = Math.floor(totalCny * p.amount / totalOriginal)
+		acc += v
+		return { member_id: p.member_id, amount: v }
+	})
+	let remainder = totalCny - acc
+	let i = 0
+	while (remainder > 0) {
+		out[i % out.length].amount += 1
+		i++
+		remainder--
+	}
+	return out
+}
+
 module.exports = {
 	splitEqually,
 	calcBalances,
-	calcTransfers
+	calcTransfers,
+	convertPartsToCny
 }
