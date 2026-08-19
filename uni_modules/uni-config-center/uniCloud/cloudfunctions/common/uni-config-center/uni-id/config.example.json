@@ -1,0 +1,14 @@
+{
+	"passwordSecret": "改成一段随机长字符串",
+	"tokenSecret": "改成另一段随机长字符串（如 openssl rand -hex 32 生成）",
+	"tokenExpiresIn": 2592000,
+	"tokenExpiresThreshold": 604800,
+	"mp-weixin": {
+		"oauth": {
+			"weixin": {
+				"appid": "你的微信小程序 appid",
+				"appsecret": "你的微信小程序 AppSecret"
+			}
+		}
+	}
+}

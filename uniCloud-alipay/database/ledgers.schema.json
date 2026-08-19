@@ -1,0 +1,57 @@
+{
+	"bsonType": "object",
+	"description": "账本。成员内嵌在 members 数组中，未注册的朋友以 uid=null 的虚拟成员存在，进小程序后可认领",
+	"required": ["title", "creator_uid", "members"],
+	"permission": {
+		"read": false,
+		"create": false,
+		"update": false,
+		"delete": false
+	},
+	"properties": {
+		"_id": {
+			"description": "账本ID，系统自动生成"
+		},
+		"title": {
+			"bsonType": "string",
+			"description": "账本名称",
+			"maxLength": 30
+		},
+		"icon": {
+			"bsonType": "string",
+			"description": "封面 emoji"
+		},
+		"creator_uid": {
+			"bsonType": "string",
+			"description": "创建者，uni-id-users._id",
+			"foreignKey": "uni-id-users._id"
+		},
+		"status": {
+			"bsonType": "int",
+			"description": "0=进行中 1=已结清",
+			"defaultValue": 0
+		},
+		"members": {
+			"bsonType": "array",
+			"description": "成员列表，元素为 { id: 成员短ID, uid: 用户ID或null(虚拟成员), nickname: 昵称 }"
+		},
+		"expense_count": {
+			"bsonType": "int",
+			"description": "账目笔数（冗余计数）",
+			"defaultValue": 0
+		},
+		"total_amount": {
+			"bsonType": "int",
+			"description": "累计支出，单位：分（冗余计数）",
+			"defaultValue": 0
+		},
+		"create_date": {
+			"bsonType": "timestamp",
+			"description": "创建时间"
+		},
+		"update_date": {
+			"bsonType": "timestamp",
+			"description": "最近动账时间，列表按此排序"
+		}
+	}
+}

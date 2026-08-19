@@ -1,0 +1,43 @@
+{
+	"pages": [
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "",
+				"enablePullDownRefresh": true,
+				"backgroundTextStyle": "dark"
+			}
+		},
+		{
+			"path": "pages/ledger/create",
+			"style": {
+				"navigationBarTitleText": "新建账本"
+			}
+		},
+		{
+			"path": "pages/ledger/detail",
+			"style": {
+				"navigationBarTitleText": "账本"
+			}
+		},
+		{
+			"path": "pages/expense/add",
+			"style": {
+				"navigationBarTitleText": "记一笔"
+			}
+		},
+		{
+			"path": "pages/profile/me",
+			"style": {
+				"navigationBarTitleText": "我的"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "搭账",
+		"navigationBarBackgroundColor": "#F2F2F7",
+		"backgroundColor": "#F2F2F7"
+	},
+	"uniIdRouter": {}
+}

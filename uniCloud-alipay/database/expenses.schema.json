@@ -1,0 +1,56 @@
+{
+	"bsonType": "object",
+	"description": "账目。金额一律用整数「分」存储，避免浮点误差；participants 存的是记账时已算好的每人分摊额",
+	"required": ["ledger_id", "title", "amount", "payer_member_id", "participants"],
+	"permission": {
+		"read": false,
+		"create": false,
+		"update": false,
+		"delete": false
+	},
+	"properties": {
+		"_id": {
+			"description": "账目ID，系统自动生成"
+		},
+		"ledger_id": {
+			"bsonType": "string",
+			"description": "所属账本",
+			"foreignKey": "ledgers._id"
+		},
+		"title": {
+			"bsonType": "string",
+			"description": "账目标题，如：晚饭、打车",
+			"maxLength": 30
+		},
+		"amount": {
+			"bsonType": "int",
+			"description": "总金额，单位：分",
+			"minimum": 1
+		},
+		"payer_member_id": {
+			"bsonType": "string",
+			"description": "垫付人（账本成员短ID）"
+		},
+		"participants": {
+			"bsonType": "array",
+			"description": "分摊明细，元素为 { member_id, amount(分) }，合计等于 amount"
+		},
+		"split_type": {
+			"bsonType": "string",
+			"description": "分摊方式",
+			"enum": ["equal", "custom"]
+		},
+		"creator_uid": {
+			"bsonType": "string",
+			"description": "记账人，uni-id-users._id"
+		},
+		"expense_date": {
+			"bsonType": "timestamp",
+			"description": "消费时间"
+		},
+		"create_date": {
+			"bsonType": "timestamp",
+			"description": "记账时间"
+		}
+	}
+}

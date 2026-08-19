@@ -1,0 +1,22 @@
+{
+	"name": "ledger-service",
+	"version": "1.0.0",
+	"description": "搭账核心云对象：账本、成员、账目、结算",
+	"main": "index.obj.js",
+	"dependencies": {
+		"uni-id-common": "file:../common/uni-id-common",
+		"uni-config-center": "file:../common/uni-config-center"
+	},
+	"cloudfunction-config": {
+		"memorySize": 256,
+		"timeout": 20,
+		"triggers": [
+			{
+				"name": "keepWarm",
+				"type": "timer",
+				"config": "0 */5 * * * * *"
+			}
+		]
+	},
+	"extensions": {}
+}

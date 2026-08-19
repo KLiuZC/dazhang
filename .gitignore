@@ -1,0 +1,6 @@
+unpackage/
+.DS_Store
+.hbuilderx/
+node_modules/
+# 含 tokenSecret 和微信 appsecret，不要提交到公开仓库
+uni_modules/uni-config-center/uniCloud/cloudfunctions/common/uni-config-center/uni-id/config.json
