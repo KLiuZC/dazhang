@@ -8,6 +8,7 @@
 const uniIdCommon = require('uni-id-common')
 const { splitEqually, calcBalances, calcTransfers } = require('./settle')
 const { checkText } = require('./wx-sec')
+const { fetchDailyRates } = require('./fx')
 
 const db = uniCloud.database()
 const dbCmd = db.command
@@ -144,6 +145,29 @@ async function toDisplayURLs(fileIDs) {
 	}
 }
 
+/** 确保当日参考汇率缓存就绪（东八区按天缓存），返回 { date, toCny } */
+async function ensureFxRates() {
+	const dayKey = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)
+	const cacheCol = db.collection('sys-cache')
+	try {
+		const res = await cacheCol.doc('fx_rates').get()
+		const cached = res.data && res.data[0]
+		if (cached && cached.date === dayKey && cached.toCny) {
+			return { date: cached.date, toCny: cached.toCny }
+		}
+	} catch (e) {
+		// 缓存未建等情况，走拉取
+	}
+	const fresh = await fetchDailyRates()
+	await cacheCol.doc('fx_rates').set({
+		date: dayKey,
+		source: fresh.source,
+		toCny: fresh.toCny,
+		updated_at: Date.now()
+	})
+	return { date: dayKey, toCny: fresh.toCny }
+}
+
 function publicMembers(ledger, uid) {
 	return (ledger.members || []).map(m => ({
 		id: m.id,
@@ -181,10 +205,21 @@ module.exports = {
 		return result
 	},
 
-	/** 定时保温：每 5 分钟被 timer 触发一次（见 package.json），防止免费实例冷启动；顺带 ping 数据库连接 */
+	/** 定时保温：每 5 分钟被 timer 触发一次（见 package.json），防止免费实例冷启动；顺带 ping 数据库、保证当日汇率就绪 */
 	async _timing() {
 		await db.collection('ledgers').limit(1).get()
+		try {
+			await ensureFxRates()
+		} catch (e) {
+			console.error('保温时刷新汇率失败', e)
+		}
 		return 'warm'
+	},
+
+	/** 当日参考汇率（1 外币 = X 人民币），仅作账本设置汇率时的默认参考 */
+	async getFxRates() {
+		const { date, toCny } = await ensureFxRates()
+		return { errCode: 0, date, rates: toCny }
 	},
 
 	/** 我的微信身份资料（头像转换成可渲染地址） */
