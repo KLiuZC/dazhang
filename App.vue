@@ -269,10 +269,7 @@
 
 	.swipe-item {
 		position: relative;
-		border-radius: 20rpx;
-		overflow: hidden;
 		margin-bottom: 20rpx;
-		background: #FFFFFF;
 	}
 
 	.swipe-actions {
@@ -281,16 +278,19 @@
 		bottom: 0;
 		right: 0;
 		display: flex;
+		align-items: center;
 	}
 
+	/* 圆形图标操作钮：浮在页面底色上，卡片滑开后露出 */
 	.swipe-btn {
-		width: 132rpx;
+		width: 88rpx;
+		height: 88rpx;
+		border-radius: 50%;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 30rpx;
-		font-weight: 600;
-		color: #FFFFFF;
+		margin-left: 24rpx;
+		transition: transform 260ms cubic-bezier(0.34, 1.3, 0.64, 1);
 	}
 
 	.swipe-edit {
@@ -301,10 +301,13 @@
 		background: var(--red);
 	}
 
+	/* 前景卡片自身带圆角，滑开后依然是完整圆角卡片 */
 	.swipe-front {
 		position: relative;
 		z-index: 1;
 		background: #FFFFFF;
+		border-radius: 20rpx;
+		overflow: hidden;
 	}
 
 	/* ---------- 成员小头像（无头像时显示昵称首字） ---------- */

@@ -122,8 +122,22 @@
 				<view v-else>
 					<view v-for="e in expenses" :key="e._id" class="swipe-item">
 						<view class="swipe-actions">
-							<view class="swipe-btn swipe-edit" @click="editExpense(e)">修改</view>
-							<view class="swipe-btn swipe-del" @click="removeExpense(e)">删除</view>
+							<view
+								class="swipe-btn swipe-edit"
+								hover-class="press-scale"
+								hover-start-time="0"
+								@click="editExpense(e)"
+							>
+								<uni-icons type="compose" size="22" color="#FFFFFF" />
+							</view>
+							<view
+								class="swipe-btn swipe-del"
+								hover-class="press-scale"
+								hover-start-time="0"
+								@click="removeExpense(e)"
+							>
+								<uni-icons type="trash" size="22" color="#FFFFFF" />
+							</view>
 						</view>
 						<view
 							class="swipe-front"
@@ -238,7 +252,7 @@
 	import { createSwipeMixin } from '@/utils/swipe.js'
 
 	export default {
-		mixins: [createSwipeMixin(264)],
+		mixins: [createSwipeMixin(224)],
 		data() {
 			return {
 				ledgerId: '',
