@@ -187,6 +187,13 @@
 						<view class="cell-value num neg">¥{{ fen2yuan(t.amount) }}</view>
 					</view>
 				</view>
+
+				<button
+					class="btn-share-img"
+					hover-class="press-scale"
+					hover-start-time="0"
+					@click="makeShareImage"
+				>把结算结果发到群里</button>
 			</view>
 
 			<view class="footer-bar">
@@ -197,6 +204,9 @@
 					@click="goAdd"
 				>记一笔</button>
 			</view>
+
+			<!-- 离屏画布：生成结算分享图用 -->
+			<canvas id="shareCanvas" type="2d" class="share-canvas"></canvas>
 
 			<!-- 账目详情浮层：底部 sheet + 遮罩，点遮罩关闭 -->
 			<view v-if="sheetExpense" class="sheet-mask" :class="{ open: sheetOpen }" @click="closeSheet">
@@ -224,7 +234,7 @@
 </template>
 
 <script>
-	import { callLedger, showError, toast, fen2yuan, fmtDate, getMyNickname, saveMyNickname, safeImg, readCache, writeCache } from '@/utils/cloud.js'
+	import { callLedger, showError, toast, fen2yuan, fmtDate, fmtDay, getMyNickname, saveMyNickname, safeImg, readCache, writeCache } from '@/utils/cloud.js'
 	import { createSwipeMixin } from '@/utils/swipe.js'
 
 	export default {
@@ -369,6 +379,116 @@
 			},
 			goManage() {
 				uni.navigateTo({ url: `/pages/ledger/create?id=${this.ledgerId}` })
+			},
+			/* ---------- 结算分享图 ---------- */
+			async makeShareImage() {
+				uni.showLoading({ title: '生成中…', mask: true })
+				try {
+					const path = await this.drawShareImage()
+					uni.hideLoading()
+					// 直接调起微信的图片分享面板；不支持时退回大图预览（长按可转发/保存）
+					uni.showShareImageMenu({
+						path,
+						fail: () => {
+							uni.previewImage({ urls: [path] })
+						}
+					})
+				} catch (e) {
+					uni.hideLoading()
+					showError(e)
+				}
+			},
+			drawShareImage() {
+				const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + '…' : s || '')
+				return new Promise((resolve, reject) => {
+					uni.createSelectorQuery()
+						.in(this)
+						.select('#shareCanvas')
+						.fields({ node: true })
+						.exec(res => {
+							const node = res && res[0] && res[0].node
+							if (!node) return reject({ errMsg: '画布初始化失败，请重试' })
+							try {
+								const W = 750
+								const shown = this.transfers.slice(0, 10)
+								const moreLine = this.transfers.length > 10 ? 1 : 0
+								const rowH = 84
+								const listTop = 420
+								const H = listTop + (Math.max(shown.length, 1) + moreLine) * rowH + 210
+								const info = uni.getWindowInfo ? uni.getWindowInfo() : uni.getSystemInfoSync()
+								const dpr = info.pixelRatio || 2
+								node.width = W * dpr
+								node.height = H * dpr
+								const ctx = node.getContext('2d')
+								ctx.scale(dpr, dpr)
+
+								// 底色
+								ctx.fillStyle = '#FFFFFF'
+								ctx.fillRect(0, 0, W, H)
+								// 账本名与概况
+								ctx.fillStyle = '#000000'
+								ctx.font = '600 40px sans-serif'
+								ctx.fillText(clip(`${this.ledger.icon} ${this.ledger.title}`, 14), 48, 108)
+								ctx.fillStyle = 'rgba(60,60,67,0.6)'
+								ctx.font = '26px sans-serif'
+								ctx.fillText(`${this.ledger.members.length}位成员 · ${this.ledger.expense_count}笔支出 · ${fmtDay(Date.now())}`, 48, 156)
+								// 总支出（大数字紧凑排版）
+								ctx.fillStyle = '#000000'
+								ctx.font = '700 84px sans-serif'
+								ctx.fillText(`¥${fen2yuan(this.ledger.total_amount)}`, 48, 268)
+								ctx.fillStyle = 'rgba(60,60,67,0.6)'
+								ctx.font = '26px sans-serif'
+								ctx.fillText('总支出', 48, 312)
+								// 分隔线
+								ctx.fillStyle = 'rgba(60,60,67,0.29)'
+								ctx.fillRect(48, 348, W - 96, 1)
+								// 方案标题
+								ctx.fillStyle = 'rgba(60,60,67,0.6)'
+								ctx.font = '28px sans-serif'
+								ctx.fillText('最省事的转账方案', 48, 400)
+								// 方案列表
+								let y = listTop + 56
+								if (!shown.length) {
+									ctx.fillStyle = '#000000'
+									ctx.font = '34px sans-serif'
+									ctx.fillText('已结清，无需转账 🎉', 48, y)
+								} else {
+									for (const t of shown) {
+										ctx.fillStyle = '#000000'
+										ctx.font = '32px sans-serif'
+										ctx.fillText(`${clip(this.memberName(t.from), 6)} → ${clip(this.memberName(t.to), 6)}`, 48, y)
+										ctx.font = '600 32px sans-serif'
+										ctx.textAlign = 'right'
+										ctx.fillText(`¥${fen2yuan(t.amount)}`, W - 48, y)
+										ctx.textAlign = 'left'
+										y += rowH
+									}
+									if (moreLine) {
+										ctx.fillStyle = 'rgba(60,60,67,0.6)'
+										ctx.font = '28px sans-serif'
+										ctx.fillText(`还有 ${this.transfers.length - 10} 笔，进入小程序查看`, 48, y)
+									}
+								}
+								// 底部品牌
+								ctx.fillStyle = 'rgba(60,60,67,0.29)'
+								ctx.fillRect(48, H - 150, W - 96, 1)
+								ctx.fillStyle = '#34C759'
+								ctx.font = '600 32px sans-serif'
+								ctx.fillText('搭账', 48, H - 84)
+								ctx.fillStyle = 'rgba(60,60,67,0.6)'
+								ctx.font = '26px sans-serif'
+								ctx.fillText('一起搭账，分账容易', 136, H - 84)
+
+								uni.canvasToTempFilePath({
+									canvas: node,
+									success: r => resolve(r.tempFilePath),
+									fail: err => reject(err)
+								}, this)
+							} catch (err) {
+								reject(err)
+							}
+						})
+				})
 			},
 			/* ---------- 账目详情浮层 ---------- */
 			openSheet(item) {
@@ -629,6 +749,28 @@
 		.sheet-mask {
 			transition: opacity 200ms ease !important;
 		}
+	}
+
+	.btn-share-img {
+		background: var(--green-tint);
+		color: var(--green);
+		font-size: 32rpx;
+		font-weight: 600;
+		text-align: center;
+		height: 96rpx;
+		line-height: 96rpx;
+		border-radius: 100rpx;
+		margin: 4rpx 0 8rpx;
+		transition: transform 260ms cubic-bezier(0.34, 1.3, 0.64, 1);
+	}
+
+	/* 离屏画布：移出可视区，仅用于绘制导出 */
+	.share-canvas {
+		position: fixed;
+		left: 9999px;
+		top: 0;
+		width: 750px;
+		height: 1600px;
 	}
 
 	.me-tag {

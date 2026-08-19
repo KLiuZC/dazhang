@@ -206,7 +206,17 @@
 					uni.vibrateShort({ type: 'light' })
 					uni.redirectTo({ url: `/pages/ledger/detail?id=${res.ledgerId}` })
 				} catch (e) {
-					showError(e)
+					if (e && e.errCode === 'QUOTA_EXCEEDED') {
+						// 配额启用后的引导；接入流量主后此处换成 [看广告] 按钮 → 激励视频 → grantAdQuota → 重试
+						uni.showModal({
+							title: '账本数量已达上限',
+							content: '看一个小广告可以增加 1 个账本额度，或删除不再使用的账本后再试。',
+							showCancel: false,
+							confirmText: '知道了'
+						})
+					} else {
+						showError(e)
+					}
 					this.submitting = false
 				}
 			}

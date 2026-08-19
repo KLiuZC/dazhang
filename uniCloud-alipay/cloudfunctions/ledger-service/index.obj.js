@@ -16,6 +16,12 @@ const MAX_MEMBERS = 50
 const MAX_TEXT_LEN = 30
 const MAX_AMOUNT = 100000000 // 单笔上限 100 万元（分）
 
+// 账本配额：上线初期不限制（开关关闭）。启用时把 QUOTA_ENABLED 改为 true 并重新上传即可，
+// 届时：进行中账本数 ≤ 免费额度 + 用户通过看广告等方式获得的 extra_ledger_quota
+const QUOTA_ENABLED = false
+const FREE_LEDGER_QUOTA = 3
+const AD_QUOTA_DAILY_LIMIT = 5 // 每日看广告加额度的上限，防刷
+
 function fail(errCode, errMsg) {
 	throw { errCode, errMsg }
 }
@@ -215,6 +221,14 @@ module.exports = {
 	/** 新建账本，创建者自动成为第一个成员 */
 	async createLedger({ title, icon, nickname } = {}) {
 		title = cleanText(title, '账本名称')
+		if (QUOTA_ENABLED) {
+			const [countRes, userRes] = await Promise.all([
+				db.collection('ledgers').where({ creator_uid: this.uid, status: 0 }).count(),
+				db.collection('uni-id-users').doc(this.uid).field({ extra_ledger_quota: true }).get()
+			])
+			const extra = ((userRes.data && userRes.data[0]) || {}).extra_ledger_quota || 0
+			assert(countRes.total < FREE_LEDGER_QUOTA + extra, '进行中的账本已达上限', 'QUOTA_EXCEEDED')
+		}
 		await ensureTextSafe(this.uid, [title])
 		const identity = await resolveIdentity(this.uid, nickname)
 		const now = Date.now()
@@ -252,6 +266,27 @@ module.exports = {
 			is_creator: l.creator_uid === this.uid
 		}))
 		return { errCode: 0, list }
+	},
+
+	/**
+	 * 看完激励视频后 +1 账本额度（每日限次防刷）。
+	 * 接入流量主后，由客户端在激励视频 onClose 且 ended=true 时调用。
+	 */
+	async grantAdQuota() {
+		// 按东八区日期做每日计数
+		const dayKey = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)
+		const res = await db.collection('uni-id-users').doc(this.uid)
+			.field({ ad_quota_date: true, ad_quota_count: true, extra_ledger_quota: true })
+			.get()
+		const user = (res.data && res.data[0]) || {}
+		const usedToday = user.ad_quota_date === dayKey ? (user.ad_quota_count || 0) : 0
+		assert(usedToday < AD_QUOTA_DAILY_LIMIT, '今天的额度已用完，明天再来吧', 'AD_QUOTA_LIMIT')
+		await db.collection('uni-id-users').doc(this.uid).update({
+			ad_quota_date: dayKey,
+			ad_quota_count: usedToday + 1,
+			extra_ledger_quota: dbCmd.inc(1)
+		})
+		return { errCode: 0, extraQuota: (user.extra_ledger_quota || 0) + 1 }
 	},
 
 	/** 编辑账本信息（名称/封面）。仅创建者 */
