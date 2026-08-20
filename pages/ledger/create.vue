@@ -100,6 +100,21 @@
 			</view>
 		</template>
 
+		<!-- 已结清账本：重新打开入口 -->
+		<view v-if="editId && isCreator && ledgerStatus === 1" class="group">
+			<view
+				class="cell"
+				hover-class="cell-press"
+				hover-start-time="0"
+				hover-stay-time="80"
+				@click="reopenLedger"
+			>
+				<view class="cell-main">
+					<view class="reopen-text">重新打开账本</view>
+				</view>
+			</view>
+		</view>
+
 		<!-- 危险操作区：仅创建者在管理模式可见 -->
 		<view v-if="editId && isCreator" class="group">
 			<view
@@ -136,6 +151,7 @@
 			return {
 				editId: '', // 有值 = 管理已有账本
 				isCreator: false,
+				ledgerStatus: 0,
 				title: '',
 				icon: '🧾',
 				catIndex: 0,
@@ -193,6 +209,7 @@
 					this.title = res.ledger.title
 					this.icon = res.ledger.icon || '🧾'
 					this.isCreator = !!res.isCreator
+					this.ledgerStatus = res.ledger.status || 0
 					this.currencies = (res.ledger.currencies || []).map(c => ({ ...c }))
 					const idx = this.categories.findIndex(c => c.icons.includes(this.icon))
 					if (idx >= 0) this.catIndex = idx
@@ -232,6 +249,23 @@
 					toast('汇率要大于 0')
 					this.currencies = this.currencies.map(c => ({ ...c }))
 				}
+			},
+			reopenLedger() {
+				uni.showModal({
+					title: '重新打开账本？',
+					content: '打开后可以继续记账，之后可再次标记结清',
+					success: async res => {
+						if (!res.confirm) return
+						try {
+							await callLedger('reopenLedger', { ledgerId: this.editId })
+							uni.vibrateShort({ type: 'light' })
+							uni.showToast({ title: '已重新打开', icon: 'success' })
+							setTimeout(() => uni.navigateBack(), 600)
+						} catch (e) {
+							showError(e)
+						}
+					}
+				})
 			},
 			removeLedger() {
 				uni.showModal({
@@ -400,6 +434,13 @@
 
 	.danger-text {
 		color: var(--red);
+		text-align: center;
+		font-size: 34rpx;
+		font-weight: 500;
+	}
+
+	.reopen-text {
+		color: var(--green);
 		text-align: center;
 		font-size: 34rpx;
 		font-weight: 500;

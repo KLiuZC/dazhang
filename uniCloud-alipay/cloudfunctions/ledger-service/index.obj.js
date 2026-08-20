@@ -463,6 +463,7 @@ module.exports = {
 			ledger: baseInfo,
 			expenses: converted.map(x => ({
 				_id: x.raw._id,
+				kind: x.raw.kind || 'expense',
 				title: x.raw.title,
 				currency: x.cur,
 				rate: x.rate,
@@ -544,6 +545,7 @@ module.exports = {
 	async addExpense({ ledgerId, title, amount, currency, payerMemberId, participantMemberIds, splitType, participants, expenseDate } = {}) {
 		const ledger = await mustGetLedger(ledgerId)
 		assert(findMemberByUid(ledger, this.uid), '你不是该账本成员', 'NOT_MEMBER')
+		assert(ledger.status !== 1, '账本已结清，可在管理页重新打开后再记账', 'LEDGER_SETTLED')
 		title = cleanText(title, '账目标题')
 		await ensureTextSafe(this.uid, [title])
 		currency = typeof currency === 'string' && currency ? currency : 'CNY'
@@ -587,6 +589,8 @@ module.exports = {
 			'只有记账人或账本创建者可以修改',
 			'FORBIDDEN'
 		)
+		assert(ledger.status !== 1, '账本已结清，可在管理页重新打开后再修改', 'LEDGER_SETTLED')
+		assert(expense.kind !== 'repayment', '转账记录不支持修改，可删除后重新标记')
 		title = cleanText(title, '账目标题')
 		await ensureTextSafe(this.uid, [title])
 		currency = typeof currency === 'string' && currency ? currency : 'CNY'
@@ -617,6 +621,75 @@ module.exports = {
 		return { errCode: 0 }
 	},
 
+	/**
+	 * 标记一笔转账已完成：写入转账记录（人民币口径），作为负向流水参与净额抵消，
+	 * 不计入消费合计。只有转账双方本人或创建者可标记。
+	 */
+	async addRepayment({ ledgerId, fromMemberId, toMemberId, amount } = {}) {
+		const ledger = await mustGetLedger(ledgerId)
+		const me = findMemberByUid(ledger, this.uid)
+		assert(me, '你不是该账本成员', 'NOT_MEMBER')
+		assert(ledger.status !== 1, '账本已结清', 'LEDGER_SETTLED')
+		assert(Number.isInteger(amount) && amount > 0 && amount <= MAX_AMOUNT, '金额不合法')
+		const ids = new Set((ledger.members || []).map(m => m.id))
+		assert(ids.has(fromMemberId) && ids.has(toMemberId) && fromMemberId !== toMemberId, '成员不合法')
+		assert(
+			me.id === fromMemberId || me.id === toMemberId || ledger.creator_uid === this.uid,
+			'只有转账双方或账本创建者可以标记',
+			'FORBIDDEN'
+		)
+		const now = Date.now()
+		await db.collection('expenses').add({
+			ledger_id: ledger._id,
+			kind: 'repayment',
+			title: '转账',
+			amount,
+			currency: 'CNY',
+			payer_member_id: fromMemberId,
+			participants: [{ member_id: toMemberId, amount }],
+			split_type: 'custom',
+			creator_uid: this.uid,
+			expense_date: now,
+			create_date: now
+		})
+		await db.collection('ledgers').doc(ledger._id).update({ update_date: now })
+		return { errCode: 0 }
+	},
+
+	/** 标记账本结清（仅创建者，且所有净额都已在尾差范围内） */
+	async settleLedger({ ledgerId } = {}) {
+		const ledger = await mustGetLedger(ledgerId)
+		assert(ledger.creator_uid === this.uid, '只有账本创建者可以标记结清', 'FORBIDDEN')
+		assert(ledger.status !== 1, '账本已是结清状态')
+		const expRes = await db.collection('expenses').where({ ledger_id: ledger._id }).limit(1000).get()
+		const rates = ledgerRateMap(ledger)
+		const cnyExpenses = expRes.data.map(e => {
+			const rate = rates[e.currency || 'CNY'] !== undefined ? rates[e.currency || 'CNY'] : 1
+			const amountCny = toCnyAmount(e.amount, rate)
+			const parts = (e.currency || 'CNY') === 'CNY'
+				? e.participants
+				: convertPartsToCny(amountCny, e.participants, e.payer_member_id)
+			return { payer_member_id: e.payer_member_id, amount: amountCny, participants: parts }
+		})
+		const balances = calcBalances(ledger.members, cnyExpenses)
+		const unsettled = [...balances.values()].some(v => Math.abs(v) > SETTLE_DUST)
+		assert(!unsettled, '还有待转账的款项，全部转清后才能标记结清', 'NOT_SETTLED')
+		await db.collection('ledgers').doc(ledger._id).update({
+			status: 1,
+			settle_date: Date.now(),
+			update_date: Date.now()
+		})
+		return { errCode: 0 }
+	},
+
+	/** 重新打开已结清的账本（仅创建者） */
+	async reopenLedger({ ledgerId } = {}) {
+		const ledger = await mustGetLedger(ledgerId)
+		assert(ledger.creator_uid === this.uid, '只有账本创建者可以重新打开', 'FORBIDDEN')
+		await db.collection('ledgers').doc(ledger._id).update({ status: 0, update_date: Date.now() })
+		return { errCode: 0 }
+	},
+
 	/** 删一笔。仅记账人或账本创建者可删 */
 	async deleteExpense({ expenseId } = {}) {
 		assert(typeof expenseId === 'string' && expenseId.length > 0, '缺少账目ID')
@@ -630,14 +703,20 @@ module.exports = {
 			'只有记账人或账本创建者可以删除',
 			'FORBIDDEN'
 		)
-		const rates = ledgerRateMap(ledger)
-		const cny = toCnyAmount(expense.amount, rates[expense.currency || 'CNY'] || 1)
+		assert(ledger.status !== 1, '账本已结清，可在管理页重新打开后再改动', 'LEDGER_SETTLED')
 		await db.collection('expenses').doc(expenseId).remove()
-		await db.collection('ledgers').doc(ledger._id).update({
-			expense_count: dbCmd.inc(-1),
-			total_amount: dbCmd.inc(-cny),
-			update_date: Date.now()
-		})
+		// 转账记录不计入消费合计，删除时也不回退计数
+		if (expense.kind === 'repayment') {
+			await db.collection('ledgers').doc(ledger._id).update({ update_date: Date.now() })
+		} else {
+			const rates = ledgerRateMap(ledger)
+			const cny = toCnyAmount(expense.amount, rates[expense.currency || 'CNY'] || 1)
+			await db.collection('ledgers').doc(ledger._id).update({
+				expense_count: dbCmd.inc(-1),
+				total_amount: dbCmd.inc(-cny),
+				update_date: Date.now()
+			})
+		}
 		return { errCode: 0 }
 	}
 }

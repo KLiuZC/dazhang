@@ -15,7 +15,12 @@
 		</view>
 
 		<view v-if="ledgers.length">
-			<view v-for="l in ledgers" :key="l._id" class="swipe-item">
+			<view
+				v-for="l in sortedLedgers"
+				:key="l._id"
+				class="swipe-item"
+				:class="{ 'settled-item': l.status === 1 }"
+			>
 				<view class="swipe-actions">
 					<view
 						class="swipe-btn swipe-del"
@@ -42,7 +47,7 @@
 						</view>
 						<view class="cell-value-col">
 							<view class="cell-value num">¥{{ fen2yuan(l.total_amount) }}</view>
-							<view class="caption">{{ fmtDay(l.create_date) }}</view>
+							<view class="caption">{{ l.status === 1 ? '已结清 🎉' : fmtDay(l.create_date) }}</view>
 						</view>
 						<view class="chevron">›</view>
 					</view>
@@ -79,6 +84,15 @@
 				profile: { nickname: '', avatar: '' },
 				loading: false,
 				navTitled: false
+			}
+		},
+		computed: {
+			// 进行中在前，已结清沉底
+			sortedLedgers() {
+				return [
+					...this.ledgers.filter(l => l.status !== 1),
+					...this.ledgers.filter(l => l.status === 1)
+				]
 			}
 		},
 		onShow() {
@@ -190,6 +204,11 @@
 		justify-content: center;
 		font-size: 34rpx;
 		font-weight: 600;
+	}
+
+	/* 已结清账本：内容降透明度表示归档；卡片背景保持不透明，挡住下层操作钮 */
+	.settled-item .cell {
+		opacity: 0.55;
 	}
 
 	/* 账本图标：iOS 设置风格的圆角方块容器 */

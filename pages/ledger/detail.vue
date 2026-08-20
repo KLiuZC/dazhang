@@ -81,6 +81,7 @@
 				<view class="footnote">{{ ledger.icon }} {{ ledger.title }}</view>
 				<view class="hero-amount num">¥{{ fen2yuan(ledger.total_amount) }}</view>
 				<view class="footnote">{{ ledger.members.length }}位成员 · {{ ledger.expense_count }}笔支出</view>
+				<view v-if="ledger.status === 1" class="settled-badge">已结清 🎉</view>
 				<view class="hero-chips">
 					<button
 						class="chip chip-tinted"
@@ -143,23 +144,26 @@
 							class="swipe-front"
 							:style="swipeFrontStyle(e._id)"
 							@touchstart="swipeStart($event, e._id)"
-							@touchmove="swipeMove($event, e._id, e.can_delete)"
+							@touchmove="swipeMove($event, e._id, e.can_delete && ledger.status !== 1)"
 							@touchend="swipeEnd($event, e._id)"
 							@click="onRowTap(e)"
 						>
 							<view class="cell">
 								<view class="cell-main">
-									<view class="cell-title">{{ e.title }}</view>
-									<view class="footnote">{{ memberName(e.payer_member_id) }} 垫付 · {{ e.participants.length }}人分 · {{ fmtDate(e.expense_date) }}</view>
+									<view class="cell-title">{{ e.kind === 'repayment' ? '已转账 ✓' : e.title }}</view>
+									<view class="footnote">
+										<template v-if="e.kind === 'repayment'">{{ memberName(e.payer_member_id) }} 转给 {{ memberName(e.participants[0] && e.participants[0].member_id) }} · {{ fmtDate(e.expense_date) }}</template>
+										<template v-else>{{ memberName(e.payer_member_id) }} 垫付 · {{ e.participants.length }}人分 · {{ fmtDate(e.expense_date) }}</template>
+									</view>
 								</view>
 								<view class="val-col">
-									<view class="cell-value num exp-amount">¥{{ fen2yuan(e.amount_cny) }}</view>
+									<view class="cell-value num exp-amount" :class="{ pos: e.kind === 'repayment' }">¥{{ fen2yuan(e.amount_cny) }}</view>
 									<view v-if="e.currency && e.currency !== 'CNY'" class="caption num">{{ curSymbol(e.currency) }}{{ fen2yuan(e.amount) }}</view>
 								</view>
 							</view>
 						</view>
 					</view>
-					<view class="hint">左滑账目可修改或删除</view>
+					<view class="hint">{{ ledger.status === 1 ? '已结清账本不可改动，可在「管理」中重新打开' : '左滑账目可修改或删除' }}</view>
 				</view>
 			</view>
 
@@ -202,9 +206,27 @@
 							<view class="cell-title">{{ memberName(t.from) }} <text class="arrow">→</text> {{ memberName(t.to) }}</view>
 						</view>
 						<view class="cell-value num neg">¥{{ fen2yuan(t.amount) }}</view>
+						<view
+							v-if="canMark(t)"
+							class="mark-btn"
+							hover-class="press-scale"
+							hover-start-time="0"
+							@click="markPaid(t)"
+						>
+							<uni-icons type="checkmarkempty" size="18" color="#34C759" />
+						</view>
 					</view>
 				</view>
+				<view v-if="transfers.length" class="hint">转完账点右侧 ✓ 标记，全部转清即可结清账本</view>
 				<view v-if="hasDust" class="hint">几分钱的凑整尾差已自动抹平，不用转账</view>
+
+				<button
+					v-if="canSettle"
+					class="btn-settle"
+					hover-class="press-scale"
+					hover-start-time="0"
+					@click="doSettleLedger"
+				>标记账本已结清 🎉</button>
 
 				<button
 					class="btn-share-img"
@@ -214,7 +236,7 @@
 				>把结算结果发到群里</button>
 			</view>
 
-			<view class="footer-bar">
+			<view v-if="ledger.status !== 1" class="footer-bar">
 				<button
 					class="btn-capsule"
 					hover-class="press-scale"
@@ -296,6 +318,14 @@
 						return { ...b, nickname: m.nickname || '?', avatar: m.avatar || '' }
 					})
 					.sort((a, b) => b.amount - a.amount)
+			},
+			// 可标记结清：创建者 + 进行中 + 有真实消费 + 已无待转款项
+			canSettle() {
+				return this.isMember === true &&
+					this.isCreator &&
+					this.ledger.status !== 1 &&
+					this.transfers.length === 0 &&
+					this.expenses.some(e => (e.kind || 'expense') !== 'repayment')
 			}
 		},
 		onLoad(options) {
@@ -414,7 +444,53 @@
 			},
 			onRowTap(item) {
 				if (this.swipeTapGuard()) return
+				if (item.kind === 'repayment') return // 转账记录信息都在行上，无浮层
 				this.openSheet(item)
+			},
+			/* ---------- 转账打钩与结清 ---------- */
+			canMark(t) {
+				return this.ledger.status !== 1 &&
+					(this.isCreator || t.from === this.myMemberId || t.to === this.myMemberId)
+			},
+			markPaid(t) {
+				uni.showModal({
+					title: '标记已转账？',
+					content: `${this.memberName(t.from)} 转给 ${this.memberName(t.to)} ¥${fen2yuan(t.amount)}，将作为转账记录写入明细`,
+					confirmText: '标记',
+					success: async res => {
+						if (!res.confirm) return
+						try {
+							await callLedger('addRepayment', {
+								ledgerId: this.ledgerId,
+								fromMemberId: t.from,
+								toMemberId: t.to,
+								amount: t.amount
+							})
+							uni.vibrateShort({ type: 'light' })
+							this.load()
+						} catch (e) {
+							showError(e)
+						}
+					}
+				})
+			},
+			doSettleLedger() {
+				uni.showModal({
+					title: '标记账本已结清？',
+					content: '结清后账本将归档，不能再记账；创建者可在管理页随时重新打开',
+					confirmText: '结清',
+					success: async res => {
+						if (!res.confirm) return
+						try {
+							await callLedger('settleLedger', { ledgerId: this.ledgerId })
+							uni.vibrateShort({ type: 'light' })
+							uni.showToast({ title: '已结清 🎉', icon: 'none' })
+							this.load()
+						} catch (e) {
+							showError(e)
+						}
+					}
+				})
 			},
 			goManage() {
 				uni.navigateTo({ url: `/pages/ledger/create?id=${this.ledgerId}` })
@@ -543,6 +619,10 @@
 				}, 320)
 			},
 			editExpense(item) {
+				if (item.kind === 'repayment') {
+					this.openId = ''
+					return toast('转账记录不支持修改，可删除后重新标记')
+				}
 				this.sheetOpen = false
 				this.sheetExpense = null
 				this.openId = ''
@@ -589,6 +669,30 @@
 		line-height: 1.15;
 		letter-spacing: -0.02em;
 		margin: 8rpx 0 4rpx;
+	}
+
+	.settled-badge {
+		display: inline-block;
+		margin-top: 16rpx;
+		background: var(--green-tint);
+		color: var(--green);
+		font-size: 26rpx;
+		font-weight: 600;
+		padding: 8rpx 28rpx;
+		border-radius: 100rpx;
+	}
+
+	.mark-btn {
+		width: 56rpx;
+		height: 56rpx;
+		border-radius: 50%;
+		background: var(--green-tint);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-left: 20rpx;
+		flex-shrink: 0;
+		transition: transform 260ms cubic-bezier(0.34, 1.3, 0.64, 1);
 	}
 
 	.hero-chips {
@@ -769,6 +873,21 @@
 		}
 	}
 
+	/* 结清：改变账本状态的主行动，实心绿 */
+	.btn-settle {
+		background: var(--green);
+		color: #FFFFFF;
+		font-size: 32rpx;
+		font-weight: 600;
+		text-align: center;
+		height: 96rpx;
+		line-height: 96rpx;
+		border-radius: 100rpx;
+		margin: 4rpx 0 16rpx;
+		transition: transform 260ms cubic-bezier(0.34, 1.3, 0.64, 1);
+	}
+
+	/* 分享结算图：次级动作，同色淡染（与实心结清钮构成主次层级） */
 	.btn-share-img {
 		background: var(--green-tint);
 		color: var(--green);

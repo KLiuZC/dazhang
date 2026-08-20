@@ -223,6 +223,7 @@
 		left: 0;
 		right: 0;
 		bottom: 0;
+		z-index: 10;
 		padding: 20rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
 		background: rgba(242, 242, 247, 0.8);
 		-webkit-backdrop-filter: blur(40rpx) saturate(180%);
