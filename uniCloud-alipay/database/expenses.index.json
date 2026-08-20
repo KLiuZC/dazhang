@@ -1,0 +1,18 @@
+[
+  {
+    "IndexName": "idx_ledger_created",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        {
+          "Name": "ledger_id",
+          "Direction": "1"
+        },
+        {
+          "Name": "create_date",
+          "Direction": "-1"
+        }
+      ],
+      "MgoIsUnique": false
+    }
+  }
+]

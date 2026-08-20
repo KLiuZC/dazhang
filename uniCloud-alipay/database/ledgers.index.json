@@ -1,0 +1,26 @@
+[
+  {
+    "IndexName": "idx_members_uid",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        {
+          "Name": "members.uid",
+          "Direction": "1"
+        }
+      ],
+      "MgoIsUnique": false
+    }
+  },
+  {
+    "IndexName": "idx_update_date",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        {
+          "Name": "update_date",
+          "Direction": "-1"
+        }
+      ],
+      "MgoIsUnique": false
+    }
+  }
+]

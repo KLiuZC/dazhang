@@ -62,7 +62,7 @@
 3. **填 appid**：`manifest.json` → 微信小程序配置 → 填入你自己的 appid
 4. **配置 uni-id**：复制 `uni_modules/uni-config-center/uniCloud/cloudfunctions/common/uni-config-center/uni-id/config.example.json` 为同目录 `config.json`，填入微信 appid、AppSecret 和随机生成的 tokenSecret（此文件已在 .gitignore 中，不会被提交）
 5. **导入 uni-id-pages**：本仓库已含；若缺失则从插件市场导入（只用它的 `uni-id-co` 云对象做登录，页面未注册）
-6. **初始化数据库**：右键 `uniCloud-alipay/database` → 上传所有 Schema；右键 `db_init.json` → 初始化云数据库（建索引）
+6. **初始化数据库**：右键 `uniCloud-alipay/database` → 上传所有 Schema；再右键该目录 → 初始化云数据库（表索引定义在各 `*.index.json` 中）
 7. **上传云端**：依次上传公共模块 `uni-config-center`、`uni-id-common`，云对象 `uni-id-co`、`ledger-service`（会连同定时保温触发器一起注册）
 8. **运行**：运行 → 运行到小程序模拟器 → 微信开发者工具（工具内记得开启「不校验合法域名」）
 

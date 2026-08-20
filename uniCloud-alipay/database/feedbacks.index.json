@@ -1,0 +1,30 @@
+[
+  {
+    "IndexName": "idx_uid_day",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        {
+          "Name": "uid",
+          "Direction": "1"
+        },
+        {
+          "Name": "day",
+          "Direction": "1"
+        }
+      ],
+      "MgoIsUnique": false
+    }
+  },
+  {
+    "IndexName": "idx_created",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        {
+          "Name": "create_date",
+          "Direction": "-1"
+        }
+      ],
+      "MgoIsUnique": false
+    }
+  }
+]

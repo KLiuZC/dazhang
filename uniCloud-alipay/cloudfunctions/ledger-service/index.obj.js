@@ -256,6 +256,29 @@ module.exports = {
 		return { errCode: 0, date, rates: toCny }
 	},
 
+	/** 意见反馈：身份绑定 + 每人每日限 3 条 + 内容安全检测，入库供控制台查看 */
+	async addFeedback({ content } = {}) {
+		assert(typeof content === 'string' && content.trim().length > 0, '写点什么再提交吧')
+		content = content.trim()
+		assert(content.length <= 500, '反馈内容不能超过 500 字')
+		const dayKey = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)
+		const countRes = await db.collection('feedbacks').where({ uid: this.uid, day: dayKey }).count()
+		assert(countRes.total < 3, '今天的反馈已达上限，明天再来吧', 'FEEDBACK_LIMIT')
+		await ensureTextSafe(this.uid, [content])
+		const profile = await readProfile(this.uid)
+		const clientInfo = this.getClientInfo()
+		await db.collection('feedbacks').add({
+			uid: this.uid,
+			nickname: profile.nickname || '',
+			content,
+			day: dayKey,
+			platform: clientInfo.uniPlatform || '',
+			app_version: clientInfo.appVersion || '',
+			create_date: Date.now()
+		})
+		return { errCode: 0 }
+	},
+
 	/** 我的微信身份资料（头像转换成可渲染地址） */
 	async getMyProfile() {
 		const profile = await readProfile(this.uid)

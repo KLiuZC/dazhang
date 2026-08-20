@@ -38,6 +38,21 @@
 			hover-start-time="0"
 			@click="save"
 		>保存</button>
+
+		<view class="group feedback-entry">
+			<view
+				class="cell"
+				hover-class="cell-press"
+				hover-start-time="0"
+				hover-stay-time="80"
+				@click="goFeedback"
+			>
+				<view class="cell-main">
+					<view class="cell-title">意见反馈</view>
+				</view>
+				<view class="chevron">›</view>
+			</view>
+		</view>
 	</view>
 </template>
 
@@ -93,6 +108,9 @@
 			},
 			onImgError(e) {
 				console.error('头像图片加载失败，src =', this.avatar, e && e.detail)
+			},
+			goFeedback() {
+				uni.navigateTo({ url: '/pages/feedback/feedback' })
 			},
 			// 微信昵称快捷填入有时在失焦才回传，这里兜底同步
 			onNickBlur(e) {
@@ -165,5 +183,9 @@
 		font-size: 34rpx;
 		height: 56rpx;
 		margin-left: 20rpx;
+	}
+
+	.feedback-entry {
+		margin-top: 40rpx;
 	}
 </style>
