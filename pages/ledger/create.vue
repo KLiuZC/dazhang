@@ -71,6 +71,43 @@
 			<view class="sec-f">1 外币 = 多少人民币，由大家商量确定，默认填入今日参考价；保存后全账本按新汇率重新折算。</view>
 		</template>
 
+		<!-- 成员管理：仅管理模式 -->
+		<template v-if="editId">
+			<view class="sec-h">成员</view>
+			<view class="group">
+				<view v-for="(m, i) in members" :key="m.id" class="cell" :class="{ 'cell-sep': i > 0 }">
+					<image v-if="m.avatar" class="mini-avatar" :src="m.avatar" mode="aspectFill" />
+					<view v-else class="mini-avatar mini-avatar-ph">{{ m.nickname.slice(0, 1) }}</view>
+					<view class="cell-main">
+						<view class="cell-title">
+							{{ m.nickname }}
+							<text v-if="m.is_owner" class="member-tag">创建者</text>
+							<text v-else-if="!m.claimed" class="member-tag member-tag-virtual">待认领</text>
+						</view>
+					</view>
+					<view
+						v-if="isCreator && ledgerStatus !== 1 && !m.claimed"
+						class="member-op"
+						hover-class="press-scale"
+						hover-start-time="0"
+						@click="renameMember(m)"
+					>
+						<uni-icons type="compose" size="18" color="#8E8E93" />
+					</view>
+					<view
+						v-if="isCreator && ledgerStatus !== 1 && !m.is_owner"
+						class="member-op"
+						hover-class="press-scale"
+						hover-start-time="0"
+						@click="removeMember(m)"
+					>
+						<uni-icons type="closeempty" size="18" color="#8E8E93" />
+					</view>
+				</view>
+			</view>
+			<view class="sec-f">「待认领」是帮朋友代记的成员，可改名；没有账目牵连的成员才能移除。</view>
+		</template>
+
 		<!-- 编辑模式不需要身份；新建时：已设置微信身份直接用，未设置则填一次昵称 -->
 		<template v-if="!editId && hasProfile">
 			<view class="sec-h">你的身份</view>
@@ -152,6 +189,7 @@
 				editId: '', // 有值 = 管理已有账本
 				isCreator: false,
 				ledgerStatus: 0,
+				members: [],
 				title: '',
 				icon: '🧾',
 				catIndex: 0,
@@ -211,6 +249,7 @@
 					this.isCreator = !!res.isCreator
 					this.ledgerStatus = res.ledger.status || 0
 					this.currencies = (res.ledger.currencies || []).map(c => ({ ...c }))
+					this.members = (res.ledger.members || []).map(m => ({ ...m, avatar: safeImg(m.avatar) }))
 					const idx = this.categories.findIndex(c => c.icons.includes(this.icon))
 					if (idx >= 0) this.catIndex = idx
 				} catch (e) {
@@ -249,6 +288,44 @@
 					toast('汇率要大于 0')
 					this.currencies = this.currencies.map(c => ({ ...c }))
 				}
+			},
+			renameMember(member) {
+				uni.showModal({
+					title: '修改成员昵称',
+					editable: true,
+					content: member.nickname,
+					placeholderText: '成员昵称',
+					success: async res => {
+						const nickname = (res.content || '').trim()
+						if (!res.confirm || !nickname || nickname === member.nickname) return
+						try {
+							await callLedger('renameMember', { ledgerId: this.editId, memberId: member.id, nickname })
+							uni.vibrateShort({ type: 'light' })
+							this.loadLedger()
+						} catch (e) {
+							showError(e)
+						}
+					}
+				})
+			},
+			removeMember(member) {
+				uni.showModal({
+					title: '移除该成员？',
+					content: `将把「${member.nickname}」移出账本；只有没有账目牵连的成员才能移除`,
+					confirmText: '移除',
+					confirmColor: '#FF3B30',
+					success: async res => {
+						if (!res.confirm) return
+						try {
+							await callLedger('removeMember', { ledgerId: this.editId, memberId: member.id })
+							uni.vibrateShort({ type: 'light' })
+							toast('已移除')
+							this.loadLedger()
+						} catch (e) {
+							showError(e)
+						}
+					}
+				})
 			},
 			reopenLedger() {
 				uni.showModal({
@@ -437,6 +514,34 @@
 		text-align: center;
 		font-size: 34rpx;
 		font-weight: 500;
+	}
+
+	.member-tag {
+		font-size: 20rpx;
+		color: var(--secondary);
+		background: var(--fill);
+		border-radius: 8rpx;
+		padding: 2rpx 10rpx;
+		margin-left: 12rpx;
+		vertical-align: 4rpx;
+	}
+
+	.member-tag-virtual {
+		color: var(--green);
+		background: var(--green-tint);
+	}
+
+	.member-op {
+		width: 56rpx;
+		height: 56rpx;
+		border-radius: 50%;
+		background: var(--fill);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-left: 16rpx;
+		flex-shrink: 0;
+		transition: transform 260ms cubic-bezier(0.34, 1.3, 0.64, 1);
 	}
 
 	.reopen-text {

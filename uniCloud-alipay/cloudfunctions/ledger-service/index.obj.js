@@ -27,7 +27,12 @@ const FREE_LEDGER_QUOTA = 3
 const AD_QUOTA_DAILY_LIMIT = 5 // 每日看广告加额度的上限，防刷
 
 function fail(errCode, errMsg) {
-	throw { errCode, errMsg }
+	// 抛真正的 Error（支付宝云序列化普通对象异常会丢失全部信息），
+	// 业务错误最终在 _after 里转为 errCode 返回值送达客户端
+	const err = new Error(errMsg)
+	err.errCode = errCode
+	err.errMsg = errMsg
+	throw err
 }
 
 function assert(cond, errMsg, errCode = 'INVALID_PARAM') {
@@ -195,7 +200,8 @@ function publicMembers(ledger, uid) {
 		nickname: m.nickname,
 		avatar: m.avatar || '',
 		claimed: !!m.uid,
-		is_me: !!uid && m.uid === uid
+		is_me: !!uid && m.uid === uid,
+		is_owner: !!m.uid && m.uid === ledger.creator_uid
 	}))
 }
 
@@ -211,7 +217,7 @@ module.exports = {
 		}
 		const payload = await this.uniIdCommon.checkToken(token)
 		if (payload.errCode) {
-			throw payload
+			fail(payload.errCode, payload.errMsg || '登录状态校验失败，请重新进入')
 		}
 		this.uid = payload.uid
 		// checkToken 临近过期会返回新 token，透传给客户端续期
@@ -219,7 +225,14 @@ module.exports = {
 	},
 
 	_after: function(error, result) {
-		if (error) throw error
+		if (error) {
+			// 业务错误（带 errCode）转为返回值：客户端 importObject 对非 0 errCode
+			// 会自动还原为异常并携带 errMsg；避免被平台的异常序列化吞掉信息
+			if (error.errCode) {
+				return { errCode: error.errCode, errMsg: error.errMsg || error.message || '操作失败' }
+			}
+			throw error // 真正的程序异常继续抛出，日志里保留堆栈
+		}
 		if (this.newToken && result && typeof result === 'object') {
 			result.newToken = this.newToken
 		}
@@ -535,6 +548,54 @@ module.exports = {
 			update_date: Date.now()
 		})
 		return { errCode: 0, memberId: member.id }
+	},
+
+	/** 修改虚拟成员昵称（仅创建者；真实成员的昵称由其微信身份决定） */
+	async renameMember({ ledgerId, memberId, nickname } = {}) {
+		const ledger = await mustGetLedger(ledgerId)
+		assert(ledger.creator_uid === this.uid, '只有账本创建者可以修改成员', 'FORBIDDEN')
+		assert(ledger.status !== 1, '账本已结清，可在管理页重新打开后再改动', 'LEDGER_SETTLED')
+		nickname = cleanText(nickname, '成员昵称')
+		await ensureTextSafe(this.uid, [nickname], 1)
+		const members = ledger.members || []
+		const idx = members.findIndex(m => m.id === memberId)
+		assert(idx >= 0, '成员不存在', 'NOT_FOUND')
+		assert(!members[idx].uid, '真实成员的昵称由本人的微信身份决定，不能修改')
+		members[idx].nickname = nickname
+		await db.collection('ledgers').doc(ledgerId).update({
+			members,
+			update_date: Date.now()
+		})
+		return { errCode: 0 }
+	},
+
+	/** 移除成员（仅创建者；成员必须没有任何账目牵连，创建者本人不可移除） */
+	async removeMember({ ledgerId, memberId } = {}) {
+		const ledger = await mustGetLedger(ledgerId)
+		assert(ledger.creator_uid === this.uid, '只有账本创建者可以移除成员', 'FORBIDDEN')
+		assert(ledger.status !== 1, '账本已结清，可在管理页重新打开后再改动', 'LEDGER_SETTLED')
+		const members = ledger.members || []
+		const idx = members.findIndex(m => m.id === memberId)
+		assert(idx >= 0, '成员不存在', 'NOT_FOUND')
+		assert(!members[idx].uid || members[idx].uid !== ledger.creator_uid, '创建者不能被移除')
+		// 有任何账目牵连（垫付过或参与过分摊）都不能移除，保护账目完整。
+		// 不用嵌套数组的点路径查询（部分云厂商支持不稳），拉出来在代码里判断
+		const refRes = await db.collection('expenses')
+			.where({ ledger_id: ledger._id })
+			.field({ payer_member_id: true, participants: true })
+			.limit(1000)
+			.get()
+		const inUse = (refRes.data || []).some(e =>
+			e.payer_member_id === memberId ||
+			(e.participants || []).some(p => p && p.member_id === memberId)
+		)
+		assert(!inUse, '该成员已有账目牵连，不能移除', 'MEMBER_IN_USE')
+		members.splice(idx, 1)
+		await db.collection('ledgers').doc(ledgerId).update({
+			members,
+			update_date: Date.now()
+		})
+		return { errCode: 0 }
 	},
 
 	/**
