@@ -6,6 +6,7 @@
 					class="avatar-btn"
 					open-type="chooseAvatar"
 					@chooseavatar="onChooseAvatar"
+					@click="checkAvatarSupport"
 					hover-class="press-scale"
 					hover-start-time="0"
 				>
@@ -81,6 +82,12 @@
 					this.avatar = safeImg(res.profile.avatar)
 				} catch (e) {
 					showError(e)
+				}
+			},
+			// open-type 按钮在低版本微信上点击无效且无回调，这里补一个可感知的提示
+			checkAvatarSupport() {
+				if (!uni.canIUse('button.open-type.chooseAvatar')) {
+					toast('微信版本过低，暂不支持选头像')
 				}
 			},
 			async uploadAvatar(filePath) {

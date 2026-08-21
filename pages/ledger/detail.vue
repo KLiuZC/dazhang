@@ -57,17 +57,32 @@
 			<template v-else>
 				<view class="group">
 					<view class="cell">
+						<button
+							class="join-avatar-btn"
+							open-type="chooseAvatar"
+							@chooseavatar="onJoinChooseAvatar"
+							@click="checkAvatarSupport"
+							hover-class="press-scale"
+							hover-start-time="0"
+						>
+							<image v-if="joinAvatar" class="join-avatar-img" :src="joinAvatar" mode="aspectFill" />
+							<view v-else class="join-avatar-img join-avatar-ph">{{ joinUploading ? '⏳' : '🙂' }}</view>
+						</button>
 						<input
-							class="cell-input"
+							class="cell-input join-nick-input"
+							type="nickname"
 							v-model="joinNickname"
 							placeholder="你的昵称"
 							placeholder-class="ph"
 							maxlength="30"
+							@blur="onJoinNickBlur"
 						/>
 					</view>
 				</view>
+				<view class="sec-f">点左侧圆圈可选用微信头像；填昵称时键盘上方可一键使用微信昵称。</view>
 				<button
 					class="btn-capsule"
+					:disabled="joinUploading"
 					hover-class="press-scale"
 					hover-start-time="0"
 					@click="join"
@@ -277,7 +292,7 @@
 </template>
 
 <script>
-	import { callLedger, showError, toast, fen2yuan, fmtDate, fmtDay, getMyNickname, saveMyNickname, safeImg, readCache, writeCache } from '@/utils/cloud.js'
+	import { callLedger, showError, toast, fen2yuan, fmtDate, fmtDay, getMyNickname, saveMyNickname, safeImg, fileIdToURL, readCache, writeCache } from '@/utils/cloud.js'
 	import { createSwipeMixin } from '@/utils/swipe.js'
 	import { curSymbol } from '@/utils/currency.js'
 
@@ -294,6 +309,10 @@
 				transfers: [],
 				tab: 'expenses',
 				joinNickname: '',
+				joinAvatar: '',        // 展示用地址（https）
+				joinAvatarFileID: '',  // 云存储 fileID，加入时提交
+				joinTempAvatar: '',    // 上传失败留存的本地路径，加入时重试
+				joinUploading: false,
 				profile: { nickname: '', avatar: '' },
 				isCreator: false,
 				hasDust: false,
@@ -431,13 +450,53 @@
 					if (!nickname) return toast('填一下你的昵称')
 				}
 				try {
-					await callLedger('joinLedger', { ledgerId: this.ledgerId, nickname })
+					if (this.joinTempAvatar) {
+						this.joinAvatarFileID = await this.uploadAvatar(this.joinTempAvatar)
+						this.joinTempAvatar = ''
+					}
+					const params = { ledgerId: this.ledgerId, nickname }
+					if (nickname && this.joinAvatarFileID) params.avatar = this.joinAvatarFileID
+					await callLedger('joinLedger', params)
 					if (nickname) saveMyNickname(nickname)
 					uni.vibrateShort({ type: 'light' })
 					this.load()
 				} catch (e) {
 					showError(e)
 				}
+			},
+			/* ---------- 加入时的微信头像昵称 ---------- */
+			// open-type 按钮在低版本微信上点击无效且无回调，这里补一个可感知的提示
+			checkAvatarSupport() {
+				if (!uni.canIUse('button.open-type.chooseAvatar')) {
+					toast('微信版本过低，暂不支持选头像')
+				}
+			},
+			async uploadAvatar(filePath) {
+				const up = await uniCloud.uploadFile({
+					filePath,
+					cloudPath: `avatars/${Date.now()}-${Math.floor(Math.random() * 1e6)}.png`
+				})
+				return up.fileID
+			},
+			async onJoinChooseAvatar(e) {
+				const url = e.detail && e.detail.avatarUrl
+				if (!url) return
+				this.joinUploading = true
+				try {
+					const fileID = await this.uploadAvatar(url)
+					this.joinAvatarFileID = fileID
+					this.joinAvatar = await fileIdToURL(fileID)
+					this.joinTempAvatar = ''
+				} catch (err) {
+					showError(err)
+					this.joinTempAvatar = url
+				}
+				this.joinUploading = false
+			},
+			// 微信昵称快捷填入有时在失焦才回传，这里兜底同步
+			onJoinNickBlur(e) {
+				const value = e.detail && e.detail.value
+				if (value) this.joinNickname = value
 			},
 			goAdd() {
 				uni.navigateTo({ url: `/pages/expense/add?id=${this.ledgerId}` })
@@ -943,5 +1002,32 @@
 		flex: 1;
 		font-size: 34rpx;
 		height: 56rpx;
+	}
+
+	.join-avatar-btn {
+		width: 96rpx;
+		height: 96rpx;
+		border-radius: 50%;
+		overflow: hidden;
+		flex-shrink: 0;
+	}
+
+	.join-avatar-img {
+		width: 96rpx;
+		height: 96rpx;
+		border-radius: 50%;
+		display: block;
+	}
+
+	.join-avatar-ph {
+		background: var(--fill);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 44rpx;
+	}
+
+	.join-nick-input {
+		margin-left: 24rpx;
 	}
 </style>

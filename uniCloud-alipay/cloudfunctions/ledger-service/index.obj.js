@@ -118,16 +118,20 @@ async function ensureTextSafe(uid, texts, scene = 2) {
 
 /**
  * 身份识别以微信资料为主：优先用个人资料里的头像昵称；
- * 未设置过资料时退回到传入的昵称，并顺手存为资料供后续账本复用。
+ * 未设置过资料时退回到传入的昵称（和可选头像），并顺手存为资料供后续账本复用。
  */
-async function resolveIdentity(uid, fallbackNickname) {
+async function resolveIdentity(uid, fallbackNickname, fallbackAvatar) {
 	const profile = await readProfile(uid)
 	if (profile.nickname) return profile
 	if (typeof fallbackNickname === 'string' && fallbackNickname.trim()) {
 		const nickname = cleanText(fallbackNickname, '你的昵称')
 		await ensureTextSafe(uid, [nickname], 1)
-		await db.collection('uni-id-users').doc(uid).update({ nickname })
-		return { nickname, avatar: profile.avatar }
+		const data = { nickname }
+		if (typeof fallbackAvatar === 'string' && fallbackAvatar && fallbackAvatar.length < 512) {
+			data.avatar = fallbackAvatar
+		}
+		await db.collection('uni-id-users').doc(uid).update(data)
+		return { nickname, avatar: data.avatar || profile.avatar }
 	}
 	fail('PROFILE_REQUIRED', '请先设置你的头像和昵称')
 }
@@ -520,14 +524,14 @@ module.exports = {
 	},
 
 	/** 以新成员身份加入（分享链接进来）。已是成员则直接返回 */
-	async joinLedger({ ledgerId, nickname } = {}) {
+	async joinLedger({ ledgerId, nickname, avatar } = {}) {
 		const ledger = await mustGetLedger(ledgerId)
 		const existing = findMemberByUid(ledger, this.uid)
 		if (existing) {
 			return { errCode: 0, memberId: existing.id, already: true }
 		}
 		assert((ledger.members || []).length < MAX_MEMBERS, `账本成员已达上限${MAX_MEMBERS}人`)
-		const identity = await resolveIdentity(this.uid, nickname)
+		const identity = await resolveIdentity(this.uid, nickname, avatar)
 		const member = { id: genMemberId(), uid: this.uid, nickname: identity.nickname, avatar: identity.avatar }
 		await db.collection('ledgers').doc(ledgerId).update({
 			members: dbCmd.push([member]),
